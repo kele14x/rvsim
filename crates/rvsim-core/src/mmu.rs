@@ -11,6 +11,7 @@
 use crate::cpu::{Hart, PRIV_M};
 use crate::csr::{CSR_MSTATUS, CSR_SATP, MSTATUS_MPP_MASK, MSTATUS_MPP_SHIFT, MSTATUS_MPRV, MSTATUS_MXR, MSTATUS_SUM};
 use crate::mem::Memory;
+use crate::pmp;
 use crate::trap::{Trap, TrapInfo};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,8 +63,9 @@ pub fn translate(hart: &Hart, mem: &dyn Memory, va: u32, access: AccessType) -> 
     let satp = hart.csrs.read_raw(CSR_SATP);
     let mode = (satp >> 31) & 1;
 
-    // M-mode (effective) or Bare mode: identity translation.
+    // M-mode (effective) or Bare mode: identity translation. PMP still applies.
     if eff_priv == PRIV_M || mode == 0 {
+        pmp::check(hart, va, va, access, eff_priv)?;
         return Ok(va);
     }
 
@@ -171,6 +173,7 @@ pub fn translate(hart: &Hart, mem: &dyn Memory, va: u32, access: AccessType) -> 
         // 4 KiB page: PA[33:22] = ppn1, PA[21:12] = ppn0
         (ppn1 << 22) | (ppn0 << 12) | offset
     };
+    pmp::check(hart, pa, va, access, eff_priv)?;
     Ok(pa)
 }
 
@@ -239,6 +242,14 @@ mod tests {
         (ppn << 10) | flags
     }
 
+    /// Install a NAPOT PMP entry covering the whole address space with R+W+X.
+    /// Lets MMU tests run in S/U-mode without PMP getting in the way.
+    fn permissive_pmp(hart: &mut Hart) {
+        use crate::csr::{CSR_PMPADDR0, CSR_PMPCFG0};
+        hart.csrs.write_raw(CSR_PMPADDR0, 0x7FFF_FFFF);
+        hart.csrs.write_raw(CSR_PMPCFG0, 0x1F); // NAPOT | R | W | X
+    }
+
     /// Build a simple identity mapping for one 4 KiB page using two-level walk.
     /// Root table at PA 0x1000, second-level at PA 0x2000, target page at PA 0x3000.
     fn setup_one_page(perms: u32) -> (Hart, VecMem) {
@@ -254,6 +265,7 @@ mod tests {
         hart.priv_mode = PRIV_U;
         // satp: MODE=1, PPN=0x1 (root at PA 0x1000)
         hart.csrs.write_raw(CSR_SATP, (1 << 31) | 0x1);
+        permissive_pmp(&mut hart);
         (hart, mem)
     }
 
@@ -341,6 +353,7 @@ mod tests {
         hart.priv_mode = PRIV_U;
         // satp.MODE = 0 (Bare) → identity even in U-mode.
         hart.csrs.write_raw(CSR_SATP, 0);
+        permissive_pmp(&mut hart);
         assert_eq!(translate(&hart, &mem, 0xdead_beef, AccessType::Load).unwrap(), 0xdead_beef);
     }
 
@@ -355,6 +368,7 @@ mod tests {
         let mut hart = Hart::new(0);
         hart.priv_mode = PRIV_U;
         hart.csrs.write_raw(CSR_SATP, (1 << 31) | 0x1);
+        permissive_pmp(&mut hart);
         // VA 0x0000_1234 → PA 0x1000_1234 (low 22 bits passed through from VA).
         assert_eq!(translate(&hart, &mem, 0x1234, AccessType::Load).unwrap(), 0x1000_1234);
     }
@@ -368,6 +382,7 @@ mod tests {
         let mut hart = Hart::new(0);
         hart.priv_mode = PRIV_U;
         hart.csrs.write_raw(CSR_SATP, (1 << 31) | 0x1);
+        permissive_pmp(&mut hart);
         let err = translate(&hart, &mem, 0x1234, AccessType::Load).unwrap_err();
         assert_eq!(err.cause, Trap::LoadPageFault.cause_code());
     }

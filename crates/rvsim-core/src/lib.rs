@@ -4,5 +4,6 @@ pub mod decode;
 pub mod execute;
 pub mod mem;
 pub mod mmu;
+pub mod pmp;
 pub mod reg;
 pub mod trap;

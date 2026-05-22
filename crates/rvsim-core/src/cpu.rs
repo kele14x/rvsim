@@ -126,28 +126,31 @@ impl Hart {
             return None;
         }
 
-        let m_bits = pending & !mideleg;
-        let s_bits = pending & mideleg;
-
-        // M-mode interrupts: deliverable if priv < M, or (priv == M and MIE=1).
+        // Delivery target is decided per-bit by mideleg, not by which interrupt
+        // it is. mideleg[i]=0 ⇒ delivered to M-mode; mideleg[i]=1 ⇒ delivered to
+        // S-mode (provided the trap is currently taken at all).
+        //
+        // Enable rules:
+        //   M-mode delivery: priv < M, or (priv == M and MIE=1).
+        //   S-mode delivery: priv < S, or (priv == S and SIE=1).
         let m_enabled = self.priv_mode < PRIV_M
             || (self.priv_mode == PRIV_M && (mstatus & MSTATUS_MIE) != 0);
-        // S-mode interrupts: deliverable if priv < S, or (priv == S and SIE=1).
-        // Never delivered while in M-mode.
         let s_enabled = self.priv_mode < PRIV_S
             || (self.priv_mode == PRIV_S && (mstatus & MSTATUS_SIE) != 0);
 
         // Priority order per privileged spec: MEI, MSI, MTI, SEI, SSI, STI.
-        let candidates: [(u32, u32, bool); 6] = [
-            (MIP_MEIP_BIT, m_bits, m_enabled),
-            (MIP_MSIP_BIT, m_bits, m_enabled),
-            (MIP_MTIP_BIT, m_bits, m_enabled),
-            (MIP_SEIP_BIT, s_bits, s_enabled),
-            (MIP_SSIP_BIT, s_bits, s_enabled),
-            (MIP_STIP_BIT, s_bits, s_enabled),
+        let order = [
+            MIP_MEIP_BIT, MIP_MSIP_BIT, MIP_MTIP_BIT,
+            MIP_SEIP_BIT, MIP_SSIP_BIT, MIP_STIP_BIT,
         ];
-        for (bit, bits, enabled) in candidates {
-            if enabled && (bits & (1 << bit)) != 0 {
+        for bit in order {
+            let mask = 1 << bit;
+            if pending & mask == 0 {
+                continue;
+            }
+            let to_s = mideleg & mask != 0;
+            let enabled = if to_s { s_enabled } else { m_enabled };
+            if enabled {
                 return Some(bit);
             }
         }
@@ -176,7 +179,7 @@ impl Hart {
                 MSTATUS_SPP_BIT, 1 << MSTATUS_SPP_BIT,
             );
             self.priv_mode = PRIV_S;
-            self.pc = self.csrs.read_raw(CSR_STVEC) & !0x3;
+            self.pc = trap_target(self.csrs.read_raw(CSR_STVEC), info);
         } else {
             self.csrs.write_raw(CSR_MEPC, trap_pc);
             self.csrs.write_raw(CSR_MCAUSE, cause);
@@ -186,10 +189,25 @@ impl Hart {
                 MSTATUS_MPP_SHIFT, MSTATUS_MPP_MASK,
             );
             self.priv_mode = PRIV_M;
-            self.pc = self.csrs.read_raw(CSR_MTVEC) & !0x3;
+            self.pc = trap_target(self.csrs.read_raw(CSR_MTVEC), info);
         }
     }
 
+}
+
+/// Compute the trap entry PC from xtvec. MODE=0 (direct) sends everything to BASE;
+/// MODE=1 (vectored) sends interrupts to BASE + 4*cause and exceptions to BASE.
+fn trap_target(xtvec: u32, info: TrapInfo) -> u32 {
+    let base = xtvec & !0x3;
+    let mode = xtvec & 0x3;
+    if mode == 1 && info.is_interrupt() {
+        base + 4 * info.cause_index()
+    } else {
+        base
+    }
+}
+
+impl Hart {
     pub fn run(&mut self, mem: &mut dyn Memory, max_cycles: u64) {
         for _ in 0..max_cycles {
             self.step(mem, 0);

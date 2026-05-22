@@ -6,10 +6,28 @@ pub const CSR_CYCLE: u16 = 0xC00;
 pub const CSR_CYCLEH: u16 = 0xC80;
 pub const CSR_INSTRET: u16 = 0xC02;
 pub const CSR_INSTRETH: u16 = 0xC82;
+pub const CSR_MVENDORID: u16 = 0xF11;
+pub const CSR_MARCHID: u16 = 0xF12;
+pub const CSR_MIMPID: u16 = 0xF13;
 pub const CSR_MHARTID: u16 = 0xF14;
+pub const CSR_MCONFIGPTR: u16 = 0xF15;
 pub const CSR_MSTATUS: u16 = 0x300;
 pub const CSR_MISA: u16 = 0x301;
 pub const CSR_MTVEC: u16 = 0x305;
+pub const CSR_MCOUNTEREN: u16 = 0x306;
+pub const CSR_MENVCFG: u16 = 0x30A;
+pub const CSR_MSTATUSH: u16 = 0x310;
+pub const CSR_MENVCFGH: u16 = 0x31A;
+pub const CSR_MCOUNTINHIBIT: u16 = 0x320;
+// Performance-counter CSRs (mhpmevent3..31, mhpmcounter3..31, *h variants).
+// OpenSBI probes / clears these during init. We RAZ/WI them.
+pub const CSR_MCYCLE: u16 = 0xB00;
+pub const CSR_MINSTRET: u16 = 0xB02;
+pub const CSR_MCYCLEH: u16 = 0xB80;
+pub const CSR_MINSTRETH: u16 = 0xB82;
+pub const CSR_MHPMEVENT_BASE: u16 = 0x323; // mhpmevent3..31 = 0x323..0x33F
+pub const CSR_MHPMCOUNTER_BASE: u16 = 0xB03; // mhpmcounter3..31 = 0xB03..0xB1F
+pub const CSR_MHPMCOUNTERH_BASE: u16 = 0xB83; // mhpmcounter3h..31h = 0xB83..0xB9F
 pub const CSR_MEPC: u16 = 0x341;
 pub const CSR_MCAUSE: u16 = 0x342;
 pub const CSR_MTVAL: u16 = 0x343;
@@ -20,8 +38,25 @@ pub const CSR_MIP: u16 = 0x344;
 pub const CSR_MSCRATCH: u16 = 0x340;
 pub const CSR_SATP: u16 = 0x180;
 pub const CSR_STVEC: u16 = 0x105;
-pub const CSR_PMPADDR0: u16 = 0x3B0;
+pub const CSR_SCOUNTEREN: u16 = 0x106;
+pub const CSR_SENVCFG: u16 = 0x10A;
+// PMP CSRs (RV32: 4 cfg registers × 4 entries = 16 entries; 16 addr registers).
 pub const CSR_PMPCFG0: u16 = 0x3A0;
+pub const CSR_PMPCFG1: u16 = 0x3A1;
+pub const CSR_PMPCFG2: u16 = 0x3A2;
+pub const CSR_PMPCFG3: u16 = 0x3A3;
+pub const CSR_PMPADDR0: u16 = 0x3B0;
+pub const PMP_NUM_ENTRIES: usize = 16;
+pub const PMP_R: u8 = 1 << 0;
+pub const PMP_W: u8 = 1 << 1;
+pub const PMP_X: u8 = 1 << 2;
+pub const PMP_A_SHIFT: u8 = 3;
+pub const PMP_A_MASK: u8 = 0x3 << PMP_A_SHIFT;
+pub const PMP_A_OFF: u8 = 0;
+pub const PMP_A_TOR: u8 = 1;
+pub const PMP_A_NA4: u8 = 2;
+pub const PMP_A_NAPOT: u8 = 3;
+pub const PMP_L: u8 = 1 << 7;
 
 // S-mode CSRs
 pub const CSR_SSTATUS: u16 = 0x100;
@@ -43,6 +78,9 @@ pub const MSTATUS_MPP_MASK: u32 = 0x3 << MSTATUS_MPP_SHIFT;
 pub const MSTATUS_MPRV: u32 = 1 << 17;
 pub const MSTATUS_SUM: u32 = 1 << 18;
 pub const MSTATUS_MXR: u32 = 1 << 19;
+pub const MSTATUS_TVM: u32 = 1 << 20;
+pub const MSTATUS_TW: u32 = 1 << 21;
+pub const MSTATUS_TSR: u32 = 1 << 22;
 
 // mip / mie bit positions
 pub const MIP_SSIP_BIT: u32 = 1;
@@ -88,11 +126,45 @@ impl Default for CsrFile {
 impl CsrFile {
     pub fn new() -> Self {
         let mut regs = HashMap::new();
-        // misa: RV32I + M + A
-        regs.insert(CSR_MISA, (1 << 30) | (1 << 12) | (1 << 8) | (1 << 0)); // MXL=1 (32-bit) | M | I | A
+        // misa: RV32IMASU. Treated as WARL — writes are ignored (see write()).
+        // S and U are required for OpenSBI: it probes misa to decide whether
+        // to bring up an S-mode payload, and refuses to run the lottery /
+        // coldboot path otherwise.
+        regs.insert(
+            CSR_MISA,
+            (1 << 30)   // MXL = 1 (32-bit)
+                | (1 << 20) // U
+                | (1 << 18) // S
+                | (1 << 12) // M
+                | (1 << 8)  // I
+                | (1 << 0), // A
+        );
+        // Read-only-zero machine ID CSRs.
+        regs.insert(CSR_MVENDORID, 0);
+        regs.insert(CSR_MARCHID, 0);
+        regs.insert(CSR_MIMPID, 0);
         regs.insert(CSR_MHARTID, 0);
+        regs.insert(CSR_MCONFIGPTR, 0);
         regs.insert(CSR_MSTATUS, 0);
         regs.insert(CSR_MTVEC, 0);
+        regs.insert(CSR_MCOUNTEREN, 0);
+        regs.insert(CSR_MENVCFG, 0);
+        regs.insert(CSR_MSTATUSH, 0);
+        regs.insert(CSR_MENVCFGH, 0);
+        regs.insert(CSR_MCOUNTINHIBIT, 0);
+        // M-mode shadows of cycle/instret. We don't drive them — the U-mode
+        // read-only aliases (CSR_CYCLE/INSTRET) already serve reads. Register
+        // them here so writes from M-mode firmware succeed (RAZ/WI in effect).
+        regs.insert(CSR_MCYCLE, 0);
+        regs.insert(CSR_MINSTRET, 0);
+        regs.insert(CSR_MCYCLEH, 0);
+        regs.insert(CSR_MINSTRETH, 0);
+        // mhpmevent3..31, mhpmcounter3..31, mhpmcounter3h..31h — RAZ/WI.
+        for i in 3..=31u16 {
+            regs.insert(CSR_MHPMEVENT_BASE + (i - 3), 0);
+            regs.insert(CSR_MHPMCOUNTER_BASE + (i - 3), 0);
+            regs.insert(CSR_MHPMCOUNTERH_BASE + (i - 3), 0);
+        }
         regs.insert(CSR_MEPC, 0);
         regs.insert(CSR_MCAUSE, 0);
         regs.insert(CSR_MTVAL, 0);
@@ -103,8 +175,15 @@ impl CsrFile {
         regs.insert(CSR_MSCRATCH, 0);
         regs.insert(CSR_SATP, 0);
         regs.insert(CSR_STVEC, 0);
-        regs.insert(CSR_PMPADDR0, 0);
+        regs.insert(CSR_SCOUNTEREN, 0);
+        regs.insert(CSR_SENVCFG, 0);
+        for i in 0..PMP_NUM_ENTRIES as u16 {
+            regs.insert(CSR_PMPADDR0 + i, 0);
+        }
         regs.insert(CSR_PMPCFG0, 0);
+        regs.insert(CSR_PMPCFG1, 0);
+        regs.insert(CSR_PMPCFG2, 0);
+        regs.insert(CSR_PMPCFG3, 0);
         // S-mode CSRs
         regs.insert(CSR_SSCRATCH, 0);
         regs.insert(CSR_SEPC, 0);
@@ -165,6 +244,8 @@ impl CsrFile {
             CSR_CYCLE | CSR_CYCLEH | CSR_INSTRET | CSR_INSTRETH => {
                 Err(Trap::IllegalInstruction)
             }
+            // misa is WARL with no software-toggleable extensions: writes are silently ignored.
+            CSR_MISA => Ok(()),
             CSR_SSTATUS => {
                 let e = self.regs.entry(CSR_MSTATUS).or_insert(0);
                 *e = (*e & !SSTATUS_MASK) | (val & SSTATUS_MASK);

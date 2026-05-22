@@ -243,24 +243,23 @@ pub fn decode(raw: u32) -> Result<Instruction, Trap> {
                 0b100 => Ok(Instruction::Xori { rd: d, rs1: r1, imm }),
                 0b110 => Ok(Instruction::Ori { rd: d, rs1: r1, imm }),
                 0b111 => Ok(Instruction::Andi { rd: d, rs1: r1, imm }),
-                0b001 => Ok(Instruction::Slli {
-                    rd: d,
-                    rs1: r1,
-                    shamt: (raw >> 20) as u8 & 0x1F,
-                }),
+                0b001 => {
+                    // SLLI: funct7 must be 0 in RV32 (bit 25 set ⇒ shamt ≥ 32 ⇒ illegal).
+                    if funct7(raw) != 0 {
+                        return Err(Trap::IllegalInstruction);
+                    }
+                    Ok(Instruction::Slli {
+                        rd: d,
+                        rs1: r1,
+                        shamt: (raw >> 20) as u8 & 0x1F,
+                    })
+                }
                 0b101 => {
-                    if funct7(raw) == 0b0100000 {
-                        Ok(Instruction::Srai {
-                            rd: d,
-                            rs1: r1,
-                            shamt: (raw >> 20) as u8 & 0x1F,
-                        })
-                    } else {
-                        Ok(Instruction::Srli {
-                            rd: d,
-                            rs1: r1,
-                            shamt: (raw >> 20) as u8 & 0x1F,
-                        })
+                    let shamt = (raw >> 20) as u8 & 0x1F;
+                    match funct7(raw) {
+                        0b0000000 => Ok(Instruction::Srli { rd: d, rs1: r1, shamt }),
+                        0b0100000 => Ok(Instruction::Srai { rd: d, rs1: r1, shamt }),
+                        _ => Err(Trap::IllegalInstruction),
                     }
                 }
                 _ => Err(Trap::IllegalInstruction),

@@ -1,8 +1,9 @@
-use crate::cpu::{Hart, PRIV_U, PRIV_S};
+use crate::cpu::{Hart, PRIV_M, PRIV_U, PRIV_S};
 use crate::csr::{
-    CSR_MEPC, CSR_SEPC,
+    CSR_MEPC, CSR_MSTATUS, CSR_SATP, CSR_SEPC,
     MSTATUS_SIE_BIT, MSTATUS_MIE_BIT, MSTATUS_SPIE_BIT, MSTATUS_MPIE_BIT,
     MSTATUS_SPP_BIT, MSTATUS_MPP_SHIFT, MSTATUS_MPP_MASK,
+    MSTATUS_TSR, MSTATUS_TVM, MSTATUS_TW,
 };
 use crate::decode::Instruction;
 use crate::mem::Memory;
@@ -357,6 +358,9 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             return Err(Trap::Breakpoint.into());
         }
         Instruction::Mret => {
+            if hart.priv_mode < PRIV_M {
+                return Err(Trap::IllegalInstruction.into());
+            }
             hart.pc = hart.csrs.read_raw(CSR_MEPC);
             hart.priv_mode = hart.csrs.mstatus_trap_return(
                 MSTATUS_MIE_BIT, MSTATUS_MPIE_BIT,
@@ -364,6 +368,13 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             );
         }
         Instruction::Sret => {
+            // SRET requires at least S; mstatus.TSR=1 traps SRET in S-mode.
+            let mstatus = hart.csrs.read_raw(CSR_MSTATUS);
+            if hart.priv_mode < PRIV_S
+                || (hart.priv_mode == PRIV_S && (mstatus & MSTATUS_TSR) != 0)
+            {
+                return Err(Trap::IllegalInstruction.into());
+            }
             hart.pc = hart.csrs.read_raw(CSR_SEPC);
             hart.priv_mode = hart.csrs.mstatus_trap_return(
                 MSTATUS_SIE_BIT, MSTATUS_SPIE_BIT,
@@ -371,9 +382,21 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             );
         }
         Instruction::SfenceVma => {
+            // U-mode always traps; S-mode traps when mstatus.TVM=1.
+            let mstatus = hart.csrs.read_raw(CSR_MSTATUS);
+            if hart.priv_mode == PRIV_U
+                || (hart.priv_mode == PRIV_S && (mstatus & MSTATUS_TVM) != 0)
+            {
+                return Err(Trap::IllegalInstruction.into());
+            }
             // No TLB to flush.
         }
         Instruction::Wfi => {
+            // mstatus.TW=1 traps WFI when executed below M-mode.
+            let mstatus = hart.csrs.read_raw(CSR_MSTATUS);
+            if hart.priv_mode < PRIV_M && (mstatus & MSTATUS_TW) != 0 {
+                return Err(Trap::IllegalInstruction.into());
+            }
             // No-op — in a simple simulator, just continue
         }
         Instruction::Fence => {
@@ -382,11 +405,13 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
 
         // CSR instructions
         Instruction::Csrrw { rd, rs1, csr } => {
+            tvm_check(hart, csr)?;
             let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             hart.csrs.write(csr, hart.regs.get(rs1), hart.priv_mode)?;
             hart.regs.set(rd, old);
         }
         Instruction::Csrrs { rd, rs1, csr } => {
+            tvm_check(hart, csr)?;
             let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             if rs1 != 0 {
                 hart.csrs.write(csr, old | hart.regs.get(rs1), hart.priv_mode)?;
@@ -394,6 +419,7 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             hart.regs.set(rd, old);
         }
         Instruction::Csrrc { rd, rs1, csr } => {
+            tvm_check(hart, csr)?;
             let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             if rs1 != 0 {
                 hart.csrs.write(csr, old & !hart.regs.get(rs1), hart.priv_mode)?;
@@ -401,11 +427,13 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             hart.regs.set(rd, old);
         }
         Instruction::Csrrwi { rd, uimm, csr } => {
+            tvm_check(hart, csr)?;
             let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             hart.csrs.write(csr, uimm as u32, hart.priv_mode)?;
             hart.regs.set(rd, old);
         }
         Instruction::Csrrsi { rd, uimm, csr } => {
+            tvm_check(hart, csr)?;
             let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             if uimm != 0 {
                 hart.csrs.write(csr, old | (uimm as u32), hart.priv_mode)?;
@@ -413,6 +441,7 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             hart.regs.set(rd, old);
         }
         Instruction::Csrrci { rd, uimm, csr } => {
+            tvm_check(hart, csr)?;
             let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             if uimm != 0 {
                 hart.csrs.write(csr, old & !(uimm as u32), hart.priv_mode)?;
@@ -421,6 +450,17 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
         }
     }
 
+    Ok(())
+}
+
+/// mstatus.TVM=1 traps S-mode accesses to satp as IllegalInstruction.
+fn tvm_check(hart: &Hart, csr: u16) -> Result<(), TrapInfo> {
+    if csr == CSR_SATP && hart.priv_mode == PRIV_S {
+        let mstatus = hart.csrs.read_raw(CSR_MSTATUS);
+        if mstatus & MSTATUS_TVM != 0 {
+            return Err(Trap::IllegalInstruction.into());
+        }
+    }
     Ok(())
 }
 
