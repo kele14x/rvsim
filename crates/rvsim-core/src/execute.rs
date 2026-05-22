@@ -1,4 +1,5 @@
-use crate::cpu::Hart;
+use crate::cpu::{Hart, PRIV_U, PRIV_S};
+use crate::csr::CSR_MSTATUS;
 use crate::decode::Instruction;
 use crate::mem::Memory;
 use crate::trap::Trap;
@@ -324,32 +325,73 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
 
         // Jumps
         Instruction::Jal { rd, imm } => {
-            hart.regs.set(rd, hart.pc); // link address (already PC+4)
             let target = pc.wrapping_add(imm as u32);
             if target % 4 != 0 {
                 return Err(Trap::InstructionAddressMisaligned);
             }
+            hart.regs.set(rd, hart.pc); // link address (already PC+4)
             hart.pc = target;
         }
         Instruction::Jalr { rd, rs1, imm } => {
             let target = (hart.regs.get(rs1).wrapping_add(imm as u32)) & !1;
-            hart.regs.set(rd, hart.pc); // link address (already PC+4)
             if target % 4 != 0 {
                 return Err(Trap::InstructionAddressMisaligned);
             }
+            hart.regs.set(rd, hart.pc); // link address (already PC+4)
             hart.pc = target;
         }
 
         // System
         Instruction::Ecall => {
-            return Err(Trap::EnvironmentCallFromMMode);
+            return Err(match hart.priv_mode {
+                PRIV_U => Trap::EnvironmentCallFromUMode,
+                PRIV_S => Trap::EnvironmentCallFromSMode,
+                _ => Trap::EnvironmentCallFromMMode,
+            });
         }
         Instruction::Ebreak => {
             return Err(Trap::Breakpoint);
         }
         Instruction::Mret => {
-            let mepc = hart.csrs.read(crate::csr::CSR_MEPC, hart.cycle, hart.instret).unwrap_or(0);
+            // Restore PC from mepc
+            let mepc = hart.csrs.read_raw(crate::csr::CSR_MEPC);
             hart.pc = mepc;
+
+            // Restore privilege and interrupt state from mstatus
+            let mut mstatus = hart.csrs.read_raw(CSR_MSTATUS);
+            // MPP (bits 12:11) → new privilege
+            let mpp = ((mstatus >> 11) & 0x3) as u8;
+            hart.priv_mode = mpp;
+            // MIE = MPIE (bit 3 = bit 7)
+            let mpie = (mstatus >> 7) & 1;
+            mstatus = (mstatus & !(1 << 3)) | (mpie << 3);
+            // MPIE = 1
+            mstatus |= 1 << 7;
+            // MPP = U (0)
+            mstatus &= !(0x3 << 11);
+            hart.csrs.write_raw(CSR_MSTATUS, mstatus);
+        }
+        Instruction::Sret => {
+            // Restore PC from sepc
+            let sepc = hart.csrs.read_raw(crate::csr::CSR_SEPC);
+            hart.pc = sepc;
+
+            // Restore privilege and interrupt state from mstatus
+            let mut mstatus = hart.csrs.read_raw(CSR_MSTATUS);
+            // SPP (bit 8) → new privilege (0=U, 1=S)
+            let spp = ((mstatus >> 8) & 1) as u8;
+            hart.priv_mode = spp;
+            // SIE = SPIE (bit 1 = bit 5)
+            let spie = (mstatus >> 5) & 1;
+            mstatus = (mstatus & !(1 << 1)) | (spie << 1);
+            // SPIE = 1
+            mstatus |= 1 << 5;
+            // SPP = U (0)
+            mstatus &= !(1 << 8);
+            hart.csrs.write_raw(CSR_MSTATUS, mstatus);
+        }
+        Instruction::SfenceVma => {
+            // No-op until MMU is implemented
         }
         Instruction::Wfi => {
             // No-op — in a simple simulator, just continue
@@ -360,40 +402,40 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
 
         // CSR instructions
         Instruction::Csrrw { rd, rs1, csr } => {
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret)?;
-            hart.csrs.write(csr, hart.regs.get(rs1))?;
+            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
+            hart.csrs.write(csr, hart.regs.get(rs1), hart.priv_mode)?;
             hart.regs.set(rd, old);
         }
         Instruction::Csrrs { rd, rs1, csr } => {
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret)?;
+            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             if rs1 != 0 {
-                hart.csrs.write(csr, old | hart.regs.get(rs1))?;
+                hart.csrs.write(csr, old | hart.regs.get(rs1), hart.priv_mode)?;
             }
             hart.regs.set(rd, old);
         }
         Instruction::Csrrc { rd, rs1, csr } => {
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret)?;
+            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             if rs1 != 0 {
-                hart.csrs.write(csr, old & !hart.regs.get(rs1))?;
+                hart.csrs.write(csr, old & !hart.regs.get(rs1), hart.priv_mode)?;
             }
             hart.regs.set(rd, old);
         }
         Instruction::Csrrwi { rd, uimm, csr } => {
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret)?;
-            hart.csrs.write(csr, uimm as u32)?;
+            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
+            hart.csrs.write(csr, uimm as u32, hart.priv_mode)?;
             hart.regs.set(rd, old);
         }
         Instruction::Csrrsi { rd, uimm, csr } => {
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret)?;
+            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             if uimm != 0 {
-                hart.csrs.write(csr, old | (uimm as u32))?;
+                hart.csrs.write(csr, old | (uimm as u32), hart.priv_mode)?;
             }
             hart.regs.set(rd, old);
         }
         Instruction::Csrrci { rd, uimm, csr } => {
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret)?;
+            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             if uimm != 0 {
-                hart.csrs.write(csr, old & !(uimm as u32))?;
+                hart.csrs.write(csr, old & !(uimm as u32), hart.priv_mode)?;
             }
             hart.regs.set(rd, old);
         }

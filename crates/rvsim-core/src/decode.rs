@@ -80,7 +80,9 @@ pub enum Instruction {
     Ecall,
     Ebreak,
     Mret,
+    Sret,
     Wfi,
+    SfenceVma,
     Fence,
     Csrrw { rd: u8, rs1: u8, csr: u16 },
     Csrrs { rd: u8, rs1: u8, csr: u16 },
@@ -323,10 +325,15 @@ pub fn decode(raw: u32) -> Result<Instruction, Trap> {
         0b1110011 => {
             let f3 = funct3(raw);
             if f3 == 0 {
+                // Check funct7 for sfence.vma (funct7 = 0b0001001)
+                if funct7(raw) == 0b0001001 {
+                    return Ok(Instruction::SfenceVma);
+                }
                 match raw {
                     0x00000073 => return Ok(Instruction::Ecall),
                     0x00100073 => return Ok(Instruction::Ebreak),
                     0x30200073 => return Ok(Instruction::Mret),
+                    0x10200073 => return Ok(Instruction::Sret),
                     0x10500073 => return Ok(Instruction::Wfi),
                     _ => return Err(Trap::IllegalInstruction),
                 }

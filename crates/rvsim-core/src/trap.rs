@@ -8,6 +8,8 @@ pub enum Trap {
     LoadAccessFault,
     StoreAddressMisaligned,
     StoreAccessFault,
+    EnvironmentCallFromUMode,
+    EnvironmentCallFromSMode,
     EnvironmentCallFromMMode,
 }
 
@@ -22,6 +24,8 @@ impl Trap {
             Trap::LoadAccessFault => 5,
             Trap::StoreAddressMisaligned => 6,
             Trap::StoreAccessFault => 7,
+            Trap::EnvironmentCallFromUMode => 8,
+            Trap::EnvironmentCallFromSMode => 9,
             Trap::EnvironmentCallFromMMode => 11,
         }
     }
