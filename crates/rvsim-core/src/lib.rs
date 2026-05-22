@@ -3,5 +3,6 @@ pub mod csr;
 pub mod decode;
 pub mod execute;
 pub mod mem;
+pub mod mmu;
 pub mod reg;
 pub mod trap;

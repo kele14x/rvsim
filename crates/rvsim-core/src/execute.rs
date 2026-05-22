@@ -6,9 +6,10 @@ use crate::csr::{
 };
 use crate::decode::Instruction;
 use crate::mem::Memory;
-use crate::trap::Trap;
+use crate::mmu::AccessType;
+use crate::trap::{Trap, TrapInfo};
 
-pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Result<(), Trap> {
+pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Result<(), TrapInfo> {
     // PC of the current instruction (we already advanced PC by 4 before calling execute)
     let pc = hart.pc.wrapping_sub(4);
 
@@ -54,17 +55,17 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             hart.regs.set(rd, hart.regs.get(rs1) & hart.regs.get(rs2));
         }
 
-        // A extension
+        // A extension — translate before any side effects (rd write, reservation set).
         Instruction::LrW { rd, rs1 } => {
-            let addr = hart.regs.get(rs1);
-            let val = mem.read32(addr)?;
+            let va = hart.regs.get(rs1);
+            let val = hart.load32(mem, va)?;
             hart.regs.set(rd, val);
-            hart.reservation = Some(addr);
+            hart.reservation = Some(va);
         }
         Instruction::ScW { rd, rs1, rs2 } => {
-            let addr = hart.regs.get(rs1);
-            if hart.reservation == Some(addr) {
-                mem.write32(addr, hart.regs.get(rs2))?;
+            let va = hart.regs.get(rs1);
+            if hart.reservation == Some(va) {
+                hart.store32(mem, va, hart.regs.get(rs2))?;
                 hart.regs.set(rd, 0); // success
             } else {
                 hart.regs.set(rd, 1); // failure
@@ -72,65 +73,64 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             hart.reservation = None;
         }
         Instruction::AmoswapW { rd, rs1, rs2 } => {
-            let addr = hart.regs.get(rs1);
-            let old = mem.read32(addr)?;
-            mem.write32(addr, hart.regs.get(rs2))?;
+            let va = hart.regs.get(rs1);
+            let old = amo_load_store(hart, mem, va, |_| hart.regs.get(rs2))?;
             hart.regs.set(rd, old);
         }
         Instruction::AmoaddW { rd, rs1, rs2 } => {
-            let addr = hart.regs.get(rs1);
-            let old = mem.read32(addr)?;
-            mem.write32(addr, old.wrapping_add(hart.regs.get(rs2)))?;
+            let va = hart.regs.get(rs1);
+            let rs2v = hart.regs.get(rs2);
+            let old = amo_load_store(hart, mem, va, |old| old.wrapping_add(rs2v))?;
             hart.regs.set(rd, old);
         }
         Instruction::AmoxorW { rd, rs1, rs2 } => {
-            let addr = hart.regs.get(rs1);
-            let old = mem.read32(addr)?;
-            mem.write32(addr, old ^ hart.regs.get(rs2))?;
+            let va = hart.regs.get(rs1);
+            let rs2v = hart.regs.get(rs2);
+            let old = amo_load_store(hart, mem, va, |old| old ^ rs2v)?;
             hart.regs.set(rd, old);
         }
         Instruction::AmoandW { rd, rs1, rs2 } => {
-            let addr = hart.regs.get(rs1);
-            let old = mem.read32(addr)?;
-            mem.write32(addr, old & hart.regs.get(rs2))?;
+            let va = hart.regs.get(rs1);
+            let rs2v = hart.regs.get(rs2);
+            let old = amo_load_store(hart, mem, va, |old| old & rs2v)?;
             hart.regs.set(rd, old);
         }
         Instruction::AmoorW { rd, rs1, rs2 } => {
-            let addr = hart.regs.get(rs1);
-            let old = mem.read32(addr)?;
-            mem.write32(addr, old | hart.regs.get(rs2))?;
+            let va = hart.regs.get(rs1);
+            let rs2v = hart.regs.get(rs2);
+            let old = amo_load_store(hart, mem, va, |old| old | rs2v)?;
             hart.regs.set(rd, old);
         }
         Instruction::AmominW { rd, rs1, rs2 } => {
-            let addr = hart.regs.get(rs1);
-            let old = mem.read32(addr)?;
-            let val = hart.regs.get(rs2);
-            let result = if (old as i32) < (val as i32) { old } else { val };
-            mem.write32(addr, result)?;
+            let va = hart.regs.get(rs1);
+            let rs2v = hart.regs.get(rs2);
+            let old = amo_load_store(hart, mem, va, |old| {
+                if (old as i32) < (rs2v as i32) { old } else { rs2v }
+            })?;
             hart.regs.set(rd, old);
         }
         Instruction::AmomaxW { rd, rs1, rs2 } => {
-            let addr = hart.regs.get(rs1);
-            let old = mem.read32(addr)?;
-            let val = hart.regs.get(rs2);
-            let result = if (old as i32) > (val as i32) { old } else { val };
-            mem.write32(addr, result)?;
+            let va = hart.regs.get(rs1);
+            let rs2v = hart.regs.get(rs2);
+            let old = amo_load_store(hart, mem, va, |old| {
+                if (old as i32) > (rs2v as i32) { old } else { rs2v }
+            })?;
             hart.regs.set(rd, old);
         }
         Instruction::AmominuW { rd, rs1, rs2 } => {
-            let addr = hart.regs.get(rs1);
-            let old = mem.read32(addr)?;
-            let val = hart.regs.get(rs2);
-            let result = if old < val { old } else { val };
-            mem.write32(addr, result)?;
+            let va = hart.regs.get(rs1);
+            let rs2v = hart.regs.get(rs2);
+            let old = amo_load_store(hart, mem, va, |old| {
+                if old < rs2v { old } else { rs2v }
+            })?;
             hart.regs.set(rd, old);
         }
         Instruction::AmomaxuW { rd, rs1, rs2 } => {
-            let addr = hart.regs.get(rs1);
-            let old = mem.read32(addr)?;
-            let val = hart.regs.get(rs2);
-            let result = if old > val { old } else { val };
-            mem.write32(addr, result)?;
+            let va = hart.regs.get(rs1);
+            let rs2v = hart.regs.get(rs2);
+            let old = amo_load_store(hart, mem, va, |old| {
+                if old > rs2v { old } else { rs2v }
+            })?;
             hart.regs.set(rd, old);
         }
 
@@ -222,45 +222,45 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             hart.regs.set(rd, ((hart.regs.get(rs1) as i32) >> shamt) as u32);
         }
 
-        // Loads
+        // Loads — translate, read, then write rd (no rd update on fault).
         Instruction::Lb { rd, rs1, imm } => {
-            let addr = hart.regs.get(rs1).wrapping_add(imm as u32);
-            let val = mem.read8(addr)? as i8 as i32 as u32;
+            let va = hart.regs.get(rs1).wrapping_add(imm as u32);
+            let val = hart.load8(mem, va)? as i8 as i32 as u32;
             hart.regs.set(rd, val);
         }
         Instruction::Lh { rd, rs1, imm } => {
-            let addr = hart.regs.get(rs1).wrapping_add(imm as u32);
-            let val = mem.read16(addr)? as i16 as i32 as u32;
+            let va = hart.regs.get(rs1).wrapping_add(imm as u32);
+            let val = hart.load16(mem, va)? as i16 as i32 as u32;
             hart.regs.set(rd, val);
         }
         Instruction::Lw { rd, rs1, imm } => {
-            let addr = hart.regs.get(rs1).wrapping_add(imm as u32);
-            let val = mem.read32(addr)?;
+            let va = hart.regs.get(rs1).wrapping_add(imm as u32);
+            let val = hart.load32(mem, va)?;
             hart.regs.set(rd, val);
         }
         Instruction::Lbu { rd, rs1, imm } => {
-            let addr = hart.regs.get(rs1).wrapping_add(imm as u32);
-            let val = mem.read8(addr)? as u32;
+            let va = hart.regs.get(rs1).wrapping_add(imm as u32);
+            let val = hart.load8(mem, va)? as u32;
             hart.regs.set(rd, val);
         }
         Instruction::Lhu { rd, rs1, imm } => {
-            let addr = hart.regs.get(rs1).wrapping_add(imm as u32);
-            let val = mem.read16(addr)? as u32;
+            let va = hart.regs.get(rs1).wrapping_add(imm as u32);
+            let val = hart.load16(mem, va)? as u32;
             hart.regs.set(rd, val);
         }
 
         // Stores
         Instruction::Sb { rs1, rs2, imm } => {
-            let addr = hart.regs.get(rs1).wrapping_add(imm as u32);
-            mem.write8(addr, hart.regs.get(rs2) as u8)?;
+            let va = hart.regs.get(rs1).wrapping_add(imm as u32);
+            hart.store8(mem, va, hart.regs.get(rs2) as u8)?;
         }
         Instruction::Sh { rs1, rs2, imm } => {
-            let addr = hart.regs.get(rs1).wrapping_add(imm as u32);
-            mem.write16(addr, hart.regs.get(rs2) as u16)?;
+            let va = hart.regs.get(rs1).wrapping_add(imm as u32);
+            hart.store16(mem, va, hart.regs.get(rs2) as u16)?;
         }
         Instruction::Sw { rs1, rs2, imm } => {
-            let addr = hart.regs.get(rs1).wrapping_add(imm as u32);
-            mem.write32(addr, hart.regs.get(rs2))?;
+            let va = hart.regs.get(rs1).wrapping_add(imm as u32);
+            hart.store32(mem, va, hart.regs.get(rs2))?;
         }
 
         // Branches
@@ -268,7 +268,7 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             if hart.regs.get(rs1) == hart.regs.get(rs2) {
                 let target = pc.wrapping_add(imm as u32);
                 if target % 4 != 0 {
-                    return Err(Trap::InstructionAddressMisaligned);
+                    return Err(Trap::InstructionAddressMisaligned.into());
                 }
                 hart.pc = target;
             }
@@ -277,7 +277,7 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             if hart.regs.get(rs1) != hart.regs.get(rs2) {
                 let target = pc.wrapping_add(imm as u32);
                 if target % 4 != 0 {
-                    return Err(Trap::InstructionAddressMisaligned);
+                    return Err(Trap::InstructionAddressMisaligned.into());
                 }
                 hart.pc = target;
             }
@@ -286,7 +286,7 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             if (hart.regs.get(rs1) as i32) < (hart.regs.get(rs2) as i32) {
                 let target = pc.wrapping_add(imm as u32);
                 if target % 4 != 0 {
-                    return Err(Trap::InstructionAddressMisaligned);
+                    return Err(Trap::InstructionAddressMisaligned.into());
                 }
                 hart.pc = target;
             }
@@ -295,7 +295,7 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             if (hart.regs.get(rs1) as i32) >= (hart.regs.get(rs2) as i32) {
                 let target = pc.wrapping_add(imm as u32);
                 if target % 4 != 0 {
-                    return Err(Trap::InstructionAddressMisaligned);
+                    return Err(Trap::InstructionAddressMisaligned.into());
                 }
                 hart.pc = target;
             }
@@ -304,7 +304,7 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             if hart.regs.get(rs1) < hart.regs.get(rs2) {
                 let target = pc.wrapping_add(imm as u32);
                 if target % 4 != 0 {
-                    return Err(Trap::InstructionAddressMisaligned);
+                    return Err(Trap::InstructionAddressMisaligned.into());
                 }
                 hart.pc = target;
             }
@@ -313,7 +313,7 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             if hart.regs.get(rs1) >= hart.regs.get(rs2) {
                 let target = pc.wrapping_add(imm as u32);
                 if target % 4 != 0 {
-                    return Err(Trap::InstructionAddressMisaligned);
+                    return Err(Trap::InstructionAddressMisaligned.into());
                 }
                 hart.pc = target;
             }
@@ -331,7 +331,7 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
         Instruction::Jal { rd, imm } => {
             let target = pc.wrapping_add(imm as u32);
             if target % 4 != 0 {
-                return Err(Trap::InstructionAddressMisaligned);
+                return Err(Trap::InstructionAddressMisaligned.into());
             }
             hart.regs.set(rd, hart.pc); // link address (already PC+4)
             hart.pc = target;
@@ -339,7 +339,7 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
         Instruction::Jalr { rd, rs1, imm } => {
             let target = (hart.regs.get(rs1).wrapping_add(imm as u32)) & !1;
             if target % 4 != 0 {
-                return Err(Trap::InstructionAddressMisaligned);
+                return Err(Trap::InstructionAddressMisaligned.into());
             }
             hart.regs.set(rd, hart.pc); // link address (already PC+4)
             hart.pc = target;
@@ -351,10 +351,10 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
                 PRIV_U => Trap::EnvironmentCallFromUMode,
                 PRIV_S => Trap::EnvironmentCallFromSMode,
                 _ => Trap::EnvironmentCallFromMMode,
-            });
+            }.into());
         }
         Instruction::Ebreak => {
-            return Err(Trap::Breakpoint);
+            return Err(Trap::Breakpoint.into());
         }
         Instruction::Mret => {
             hart.pc = hart.csrs.read_raw(CSR_MEPC);
@@ -371,7 +371,7 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             );
         }
         Instruction::SfenceVma => {
-            // No-op until MMU is implemented
+            // No TLB to flush.
         }
         Instruction::Wfi => {
             // No-op — in a simple simulator, just continue
@@ -422,4 +422,24 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
     }
 
     Ok(())
+}
+
+/// AMO helper: translate twice (Load then Store), read, compute new value, write.
+/// Both translations happen up front so that a D-bit fault on the store side is
+/// raised before any architectural side effects.
+fn amo_load_store<F>(
+    hart: &Hart,
+    mem: &mut dyn Memory,
+    va: u32,
+    op: F,
+) -> Result<u32, TrapInfo>
+where
+    F: FnOnce(u32) -> u32,
+{
+    let pa_load = hart.translate(mem, va, AccessType::Load)?;
+    let pa_store = hart.translate(mem, va, AccessType::Store)?;
+    let old = mem.read32(pa_load)?;
+    let new = op(old);
+    mem.write32(pa_store, new)?;
+    Ok(old)
 }

@@ -40,6 +40,9 @@ pub const MSTATUS_MPIE_BIT: u32 = 7;
 pub const MSTATUS_SPP_BIT: u32 = 8;
 pub const MSTATUS_MPP_SHIFT: u32 = 11;
 pub const MSTATUS_MPP_MASK: u32 = 0x3 << MSTATUS_MPP_SHIFT;
+pub const MSTATUS_MPRV: u32 = 1 << 17;
+pub const MSTATUS_SUM: u32 = 1 << 18;
+pub const MSTATUS_MXR: u32 = 1 << 19;
 
 // sstatus is a masked view of mstatus; these bits are visible in S-mode:
 // SIE(1), SPIE(5), UBE(6), SPP(8), VS(10:9), FS(14:13), XS(16:15), SUM(18), MXR(19), SD(31)
