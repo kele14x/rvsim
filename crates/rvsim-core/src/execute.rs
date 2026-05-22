@@ -49,6 +49,86 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             hart.regs.set(rd, hart.regs.get(rs1) & hart.regs.get(rs2));
         }
 
+        // A extension
+        Instruction::LrW { rd, rs1 } => {
+            let addr = hart.regs.get(rs1);
+            let val = mem.read32(addr)?;
+            hart.regs.set(rd, val);
+            hart.reservation = Some(addr);
+        }
+        Instruction::ScW { rd, rs1, rs2 } => {
+            let addr = hart.regs.get(rs1);
+            if hart.reservation == Some(addr) {
+                mem.write32(addr, hart.regs.get(rs2))?;
+                hart.regs.set(rd, 0); // success
+            } else {
+                hart.regs.set(rd, 1); // failure
+            }
+            hart.reservation = None;
+        }
+        Instruction::AmoswapW { rd, rs1, rs2 } => {
+            let addr = hart.regs.get(rs1);
+            let old = mem.read32(addr)?;
+            mem.write32(addr, hart.regs.get(rs2))?;
+            hart.regs.set(rd, old);
+        }
+        Instruction::AmoaddW { rd, rs1, rs2 } => {
+            let addr = hart.regs.get(rs1);
+            let old = mem.read32(addr)?;
+            mem.write32(addr, old.wrapping_add(hart.regs.get(rs2)))?;
+            hart.regs.set(rd, old);
+        }
+        Instruction::AmoxorW { rd, rs1, rs2 } => {
+            let addr = hart.regs.get(rs1);
+            let old = mem.read32(addr)?;
+            mem.write32(addr, old ^ hart.regs.get(rs2))?;
+            hart.regs.set(rd, old);
+        }
+        Instruction::AmoandW { rd, rs1, rs2 } => {
+            let addr = hart.regs.get(rs1);
+            let old = mem.read32(addr)?;
+            mem.write32(addr, old & hart.regs.get(rs2))?;
+            hart.regs.set(rd, old);
+        }
+        Instruction::AmoorW { rd, rs1, rs2 } => {
+            let addr = hart.regs.get(rs1);
+            let old = mem.read32(addr)?;
+            mem.write32(addr, old | hart.regs.get(rs2))?;
+            hart.regs.set(rd, old);
+        }
+        Instruction::AmominW { rd, rs1, rs2 } => {
+            let addr = hart.regs.get(rs1);
+            let old = mem.read32(addr)?;
+            let val = hart.regs.get(rs2);
+            let result = if (old as i32) < (val as i32) { old } else { val };
+            mem.write32(addr, result)?;
+            hart.regs.set(rd, old);
+        }
+        Instruction::AmomaxW { rd, rs1, rs2 } => {
+            let addr = hart.regs.get(rs1);
+            let old = mem.read32(addr)?;
+            let val = hart.regs.get(rs2);
+            let result = if (old as i32) > (val as i32) { old } else { val };
+            mem.write32(addr, result)?;
+            hart.regs.set(rd, old);
+        }
+        Instruction::AmominuW { rd, rs1, rs2 } => {
+            let addr = hart.regs.get(rs1);
+            let old = mem.read32(addr)?;
+            let val = hart.regs.get(rs2);
+            let result = if old < val { old } else { val };
+            mem.write32(addr, result)?;
+            hart.regs.set(rd, old);
+        }
+        Instruction::AmomaxuW { rd, rs1, rs2 } => {
+            let addr = hart.regs.get(rs1);
+            let old = mem.read32(addr)?;
+            let val = hart.regs.get(rs2);
+            let result = if old > val { old } else { val };
+            mem.write32(addr, result)?;
+            hart.regs.set(rd, old);
+        }
+
         // M extension
         Instruction::Mul { rd, rs1, rs2 } => {
             hart.regs.set(rd, hart.regs.get(rs1).wrapping_mul(hart.regs.get(rs2)));

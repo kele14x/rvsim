@@ -11,6 +11,8 @@ pub struct Hart {
     pub csrs: CsrFile,
     pub cycle: u64,
     pub instret: u64,
+    /// Load-reserved address for LR/SC (None = no reservation)
+    pub reservation: Option<u32>,
 }
 
 impl Hart {
@@ -21,6 +23,7 @@ impl Hart {
             csrs: CsrFile::new(),
             cycle: 0,
             instret: 0,
+            reservation: None,
         }
     }
 

@@ -53,6 +53,19 @@ pub enum Instruction {
     Jal { rd: u8, imm: i32 },
     Jalr { rd: u8, rs1: u8, imm: i32 },
 
+    // A extension
+    LrW { rd: u8, rs1: u8 },
+    ScW { rd: u8, rs1: u8, rs2: u8 },
+    AmoswapW { rd: u8, rs1: u8, rs2: u8 },
+    AmoaddW { rd: u8, rs1: u8, rs2: u8 },
+    AmoxorW { rd: u8, rs1: u8, rs2: u8 },
+    AmoandW { rd: u8, rs1: u8, rs2: u8 },
+    AmoorW { rd: u8, rs1: u8, rs2: u8 },
+    AmominW { rd: u8, rs1: u8, rs2: u8 },
+    AmomaxW { rd: u8, rs1: u8, rs2: u8 },
+    AmominuW { rd: u8, rs1: u8, rs2: u8 },
+    AmomaxuW { rd: u8, rs1: u8, rs2: u8 },
+
     // M extension
     Mul { rd: u8, rs1: u8, rs2: u8 },
     Mulh { rd: u8, rs1: u8, rs2: u8 },
@@ -277,6 +290,28 @@ pub fn decode(raw: u32) -> Result<Instruction, Trap> {
                 (0b101, 0b0000001) => Ok(Instruction::Divu { rd: d, rs1: r1, rs2: r2 }),
                 (0b110, 0b0000001) => Ok(Instruction::Rem { rd: d, rs1: r1, rs2: r2 }),
                 (0b111, 0b0000001) => Ok(Instruction::Remu { rd: d, rs1: r1, rs2: r2 }),
+                _ => Err(Trap::IllegalInstruction),
+            }
+        }
+
+        // AMO (A extension)
+        0b0101111 => {
+            let d = rd(raw);
+            let r1 = rs1(raw);
+            let r2 = rs2(raw);
+            let funct5 = (raw >> 27) & 0x1F;
+            match funct5 {
+                0b00010 => Ok(Instruction::LrW { rd: d, rs1: r1 }),
+                0b00011 => Ok(Instruction::ScW { rd: d, rs1: r1, rs2: r2 }),
+                0b00001 => Ok(Instruction::AmoswapW { rd: d, rs1: r1, rs2: r2 }),
+                0b00000 => Ok(Instruction::AmoaddW { rd: d, rs1: r1, rs2: r2 }),
+                0b00100 => Ok(Instruction::AmoxorW { rd: d, rs1: r1, rs2: r2 }),
+                0b01100 => Ok(Instruction::AmoandW { rd: d, rs1: r1, rs2: r2 }),
+                0b01000 => Ok(Instruction::AmoorW { rd: d, rs1: r1, rs2: r2 }),
+                0b10000 => Ok(Instruction::AmominW { rd: d, rs1: r1, rs2: r2 }),
+                0b10100 => Ok(Instruction::AmomaxW { rd: d, rs1: r1, rs2: r2 }),
+                0b11000 => Ok(Instruction::AmominuW { rd: d, rs1: r1, rs2: r2 }),
+                0b11100 => Ok(Instruction::AmomaxuW { rd: d, rs1: r1, rs2: r2 }),
                 _ => Err(Trap::IllegalInstruction),
             }
         }
