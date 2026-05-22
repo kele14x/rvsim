@@ -44,9 +44,36 @@ pub const MSTATUS_MPRV: u32 = 1 << 17;
 pub const MSTATUS_SUM: u32 = 1 << 18;
 pub const MSTATUS_MXR: u32 = 1 << 19;
 
+// mip / mie bit positions
+pub const MIP_SSIP_BIT: u32 = 1;
+pub const MIP_MSIP_BIT: u32 = 3;
+pub const MIP_STIP_BIT: u32 = 5;
+pub const MIP_MTIP_BIT: u32 = 7;
+pub const MIP_SEIP_BIT: u32 = 9;
+pub const MIP_MEIP_BIT: u32 = 11;
+
+pub const MIP_SSIP: u32 = 1 << MIP_SSIP_BIT;
+pub const MIP_MSIP: u32 = 1 << MIP_MSIP_BIT;
+pub const MIP_STIP: u32 = 1 << MIP_STIP_BIT;
+pub const MIP_MTIP: u32 = 1 << MIP_MTIP_BIT;
+pub const MIP_SEIP: u32 = 1 << MIP_SEIP_BIT;
+pub const MIP_MEIP: u32 = 1 << MIP_MEIP_BIT;
+
+/// Bits of mip that software (CSR instructions) may modify directly.
+/// Hardware-driven bits (MTIP, MEIP, SEIP) are read-only from software.
+pub const MIP_SW_WRITABLE_PUB: u32 = MIP_SSIP | MIP_MSIP | MIP_STIP;
+const MIP_SW_WRITABLE: u32 = MIP_SW_WRITABLE_PUB;
+
+// Convenience bitmasks for mstatus.MIE / mstatus.SIE
+pub const MSTATUS_MIE: u32 = 1 << MSTATUS_MIE_BIT;
+pub const MSTATUS_SIE: u32 = 1 << MSTATUS_SIE_BIT;
+
 // sstatus is a masked view of mstatus; these bits are visible in S-mode:
 // SIE(1), SPIE(5), UBE(6), SPP(8), VS(10:9), FS(14:13), XS(16:15), SUM(18), MXR(19), SD(31)
 const SSTATUS_MASK: u32 = 0x800D_E762;
+
+// sie / sip are masked views of mie / mip: SSIP/STIP/SEIP only.
+const SIE_SIP_MASK: u32 = MIP_SSIP | MIP_STIP | MIP_SEIP;
 
 pub struct CsrFile {
     regs: HashMap<u16, u32>,
@@ -119,6 +146,9 @@ impl CsrFile {
                 let mstatus = self.regs.get(&CSR_MSTATUS).copied().unwrap_or(0);
                 Ok(mstatus & SSTATUS_MASK)
             }
+            // sie / sip are masked views of mie / mip
+            CSR_SIE => Ok(self.regs.get(&CSR_MIE).copied().unwrap_or(0) & SIE_SIP_MASK),
+            CSR_SIP => Ok(self.regs.get(&CSR_MIP).copied().unwrap_or(0) & SIE_SIP_MASK),
             _ => self.regs.get(&addr).copied().ok_or(Trap::IllegalInstruction),
         }
     }
@@ -138,6 +168,24 @@ impl CsrFile {
             CSR_SSTATUS => {
                 let e = self.regs.entry(CSR_MSTATUS).or_insert(0);
                 *e = (*e & !SSTATUS_MASK) | (val & SSTATUS_MASK);
+                Ok(())
+            }
+            // sie / sip write through to mie / mip, only the S-visible bits.
+            CSR_SIE => {
+                let e = self.regs.entry(CSR_MIE).or_insert(0);
+                *e = (*e & !SIE_SIP_MASK) | (val & SIE_SIP_MASK);
+                Ok(())
+            }
+            CSR_SIP => {
+                // From S-mode, only SSIP is software-writable inside the S-visible mask.
+                let e = self.regs.entry(CSR_MIP).or_insert(0);
+                *e = (*e & !MIP_SSIP) | (val & MIP_SSIP);
+                Ok(())
+            }
+            // mip: only SSIP/MSIP/STIP are software-writable. MTIP/MEIP/SEIP are HW-driven.
+            CSR_MIP => {
+                let e = self.regs.entry(CSR_MIP).or_insert(0);
+                *e = (*e & !MIP_SW_WRITABLE) | (val & MIP_SW_WRITABLE);
                 Ok(())
             }
             _ => {

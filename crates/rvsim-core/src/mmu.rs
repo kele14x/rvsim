@@ -274,7 +274,7 @@ mod tests {
         mem.write32(0x2000 + 3 * 4, leaf).unwrap();
         hart.priv_mode = PRIV_U;
         let err = translate(&hart, &mem, 0x3000, AccessType::Load).unwrap_err();
-        assert_eq!(err.trap, Trap::LoadPageFault);
+        assert_eq!(err.cause, Trap::LoadPageFault.cause_code());
         assert_eq!(err.tval, 0x3000);
     }
 
@@ -285,7 +285,7 @@ mod tests {
         let leaf = pte(0x3, PTE_V | PTE_A | PTE_D | PTE_W | PTE_U);
         mem.write32(0x2000 + 3 * 4, leaf).unwrap();
         let err = translate(&hart, &mem, 0x3000, AccessType::Load).unwrap_err();
-        assert_eq!(err.trap, Trap::LoadPageFault);
+        assert_eq!(err.cause, Trap::LoadPageFault.cause_code());
     }
 
     #[test]
@@ -298,7 +298,7 @@ mod tests {
         assert!(translate(&hart, &mem, 0x3000, AccessType::Load).is_ok());
         // Store faults because D=0.
         let err = translate(&hart, &mem, 0x3000, AccessType::Store).unwrap_err();
-        assert_eq!(err.trap, Trap::StorePageFault);
+        assert_eq!(err.cause, Trap::StorePageFault.cause_code());
     }
 
     #[test]
@@ -308,7 +308,7 @@ mod tests {
         let leaf = pte(0x3, PTE_V | PTE_R | PTE_U);
         mem.write32(0x2000 + 3 * 4, leaf).unwrap();
         let err = translate(&hart, &mem, 0x3000, AccessType::Load).unwrap_err();
-        assert_eq!(err.trap, Trap::LoadPageFault);
+        assert_eq!(err.cause, Trap::LoadPageFault.cause_code());
     }
 
     #[test]
@@ -317,13 +317,13 @@ mod tests {
         hart.priv_mode = PRIV_S;
         // SUM = 0, accessing U page → fault.
         let err = translate(&hart, &mem, 0x3000, AccessType::Load).unwrap_err();
-        assert_eq!(err.trap, Trap::LoadPageFault);
+        assert_eq!(err.cause, Trap::LoadPageFault.cause_code());
 
         // With SUM set, loads/stores work; fetches still fault.
         hart.csrs.write_raw(CSR_MSTATUS, MSTATUS_SUM);
         assert!(translate(&hart, &mem, 0x3000, AccessType::Load).is_ok());
         let err = translate(&hart, &mem, 0x3000, AccessType::Fetch).unwrap_err();
-        assert_eq!(err.trap, Trap::InstructionPageFault);
+        assert_eq!(err.cause, Trap::InstructionPageFault.cause_code());
     }
 
     #[test]
@@ -369,6 +369,6 @@ mod tests {
         hart.priv_mode = PRIV_U;
         hart.csrs.write_raw(CSR_SATP, (1 << 31) | 0x1);
         let err = translate(&hart, &mem, 0x1234, AccessType::Load).unwrap_err();
-        assert_eq!(err.trap, Trap::LoadPageFault);
+        assert_eq!(err.cause, Trap::LoadPageFault.cause_code());
     }
 }

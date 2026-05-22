@@ -1,8 +1,10 @@
 use crate::csr::{
-    CsrFile, CSR_MCAUSE, CSR_MEPC, CSR_MTVAL, CSR_MTVEC,
-    CSR_MEDELEG, CSR_SCAUSE, CSR_SEPC, CSR_STVAL, CSR_STVEC,
-    MSTATUS_SIE_BIT, MSTATUS_MIE_BIT, MSTATUS_SPIE_BIT, MSTATUS_MPIE_BIT,
-    MSTATUS_SPP_BIT, MSTATUS_MPP_SHIFT, MSTATUS_MPP_MASK,
+    CsrFile, CSR_MCAUSE, CSR_MEPC, CSR_MIDELEG, CSR_MIE, CSR_MIP, CSR_MSTATUS,
+    CSR_MTVAL, CSR_MTVEC, CSR_MEDELEG, CSR_SCAUSE, CSR_SEPC, CSR_STVAL, CSR_STVEC,
+    MIP_MEIP_BIT, MIP_MSIP_BIT, MIP_MTIP_BIT, MIP_SEIP_BIT, MIP_SSIP_BIT, MIP_STIP_BIT,
+    MIP_SW_WRITABLE_PUB,
+    MSTATUS_MIE_BIT, MSTATUS_MIE, MSTATUS_MPIE_BIT, MSTATUS_MPP_MASK, MSTATUS_MPP_SHIFT,
+    MSTATUS_SIE_BIT, MSTATUS_SIE, MSTATUS_SPIE_BIT, MSTATUS_SPP_BIT,
 };
 use crate::decode::decode;
 use crate::execute::execute;
@@ -77,7 +79,21 @@ impl Hart {
         Ok(mem.write32(pa, val)?)
     }
 
-    pub fn step(&mut self, mem: &mut dyn Memory) {
+    /// Drive one instruction. `pending_hw` carries mip bits set by hardware
+    /// sources outside the CPU (CLINT MTIP/MSIP, PLIC SEIP). Software-writable
+    /// bits already in `mip` are preserved.
+    pub fn step(&mut self, mem: &mut dyn Memory, pending_hw: u32) {
+        // Merge HW-driven mip bits with software-set bits.
+        let sw = self.csrs.read_raw(CSR_MIP) & MIP_SW_WRITABLE_PUB;
+        self.csrs.write_raw(CSR_MIP, sw | pending_hw);
+
+        // Interrupts checked before fetch — taken between instructions.
+        if let Some(code) = self.take_interrupt() {
+            self.handle_trap(TrapInfo::interrupt(code), self.pc);
+            self.cycle += 1;
+            return;
+        }
+
         let trap_pc = self.pc;
 
         let result = (|| -> Result<(), TrapInfo> {
@@ -97,11 +113,59 @@ impl Hart {
         self.cycle += 1;
     }
 
+    /// Compute the highest-priority deliverable interrupt, or `None`.
+    /// Returns the bit index (0..31), not the full cause word.
+    fn take_interrupt(&self) -> Option<u32> {
+        let mip = self.csrs.read_raw(CSR_MIP);
+        let mie = self.csrs.read_raw(CSR_MIE);
+        let mideleg = self.csrs.read_raw(CSR_MIDELEG);
+        let mstatus = self.csrs.read_raw(CSR_MSTATUS);
+
+        let pending = mip & mie;
+        if pending == 0 {
+            return None;
+        }
+
+        let m_bits = pending & !mideleg;
+        let s_bits = pending & mideleg;
+
+        // M-mode interrupts: deliverable if priv < M, or (priv == M and MIE=1).
+        let m_enabled = self.priv_mode < PRIV_M
+            || (self.priv_mode == PRIV_M && (mstatus & MSTATUS_MIE) != 0);
+        // S-mode interrupts: deliverable if priv < S, or (priv == S and SIE=1).
+        // Never delivered while in M-mode.
+        let s_enabled = self.priv_mode < PRIV_S
+            || (self.priv_mode == PRIV_S && (mstatus & MSTATUS_SIE) != 0);
+
+        // Priority order per privileged spec: MEI, MSI, MTI, SEI, SSI, STI.
+        let candidates: [(u32, u32, bool); 6] = [
+            (MIP_MEIP_BIT, m_bits, m_enabled),
+            (MIP_MSIP_BIT, m_bits, m_enabled),
+            (MIP_MTIP_BIT, m_bits, m_enabled),
+            (MIP_SEIP_BIT, s_bits, s_enabled),
+            (MIP_SSIP_BIT, s_bits, s_enabled),
+            (MIP_STIP_BIT, s_bits, s_enabled),
+        ];
+        for (bit, bits, enabled) in candidates {
+            if enabled && (bits & (1 << bit)) != 0 {
+                return Some(bit);
+            }
+        }
+        None
+    }
+
     fn handle_trap(&mut self, info: TrapInfo, trap_pc: u32) {
-        let cause = info.trap.cause_code();
+        let cause = info.cause;
         let tval = info.tval;
-        let delegate_to_s = self.priv_mode < PRIV_M
-            && (self.csrs.read_raw(CSR_MEDELEG) & (1 << cause)) != 0;
+        let idx = info.cause_index();
+
+        // Delegation: interrupts use mideleg, exceptions use medeleg.
+        let deleg = if info.is_interrupt() {
+            self.csrs.read_raw(CSR_MIDELEG)
+        } else {
+            self.csrs.read_raw(CSR_MEDELEG)
+        };
+        let delegate_to_s = self.priv_mode < PRIV_M && (deleg & (1 << idx)) != 0;
 
         if delegate_to_s {
             self.csrs.write_raw(CSR_SEPC, trap_pc);
@@ -128,7 +192,7 @@ impl Hart {
 
     pub fn run(&mut self, mem: &mut dyn Memory, max_cycles: u64) {
         for _ in 0..max_cycles {
-            self.step(mem);
+            self.step(mem, 0);
         }
     }
 }

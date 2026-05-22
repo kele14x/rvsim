@@ -5,7 +5,10 @@ use std::process;
 use goblin::elf::Elf;
 use rvsim_core::cpu::Hart;
 use rvsim_core::mem::Memory;
+use rvsim_mem::bus::Bus;
+use rvsim_mem::clint::Clint;
 use rvsim_mem::flat::FlatMemory;
+use rvsim_mem::uart::Uart;
 
 const RAM_BASE: u32 = 0x8000_0000;
 const RAM_SIZE: usize = 128 * 1024 * 1024; // 128 MB
@@ -27,7 +30,8 @@ fn main() {
         process::exit(1);
     });
 
-    let mut mem = FlatMemory::new(RAM_SIZE, RAM_BASE);
+    let ram = FlatMemory::new(RAM_SIZE, RAM_BASE);
+    let mut bus = Bus::new(ram, Clint::new(), Uart::stdout());
 
     // Load segments
     for ph in &elf.program_headers {
@@ -36,7 +40,7 @@ fn main() {
             let file_size = ph.p_filesz as usize;
             let vaddr = ph.p_paddr as u32;
             if file_size > 0 {
-                mem.load(vaddr, &elf_data[file_offset..file_offset + file_size]);
+                bus.ram.load(vaddr, &elf_data[file_offset..file_offset + file_size]);
             }
         }
     }
@@ -59,11 +63,13 @@ fn main() {
 
     let max_cycles: u64 = 10_000_000;
     for _ in 0..max_cycles {
-        hart.step(&mut mem);
+        bus.tick(hart.cycle);
+        let pending = bus.pending_interrupts();
+        hart.step(&mut bus, pending);
 
         // Check tohost after each step
         if let Some(addr) = tohost_addr {
-            let val = mem.read32(addr).unwrap_or(0);
+            let val = bus.read32(addr).unwrap_or(0);
             if val != 0 {
                 if val == 1 {
                     println!("PASS");
