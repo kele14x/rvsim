@@ -1,0 +1,13 @@
+# MacOS
+.DS_Store
+
+# Rust
+/target
+
+# Reference docs (freely downloadable, too large for git)
+doc/*.pdf
+
+# riscv-tests: keep ELF binaries, exclude derived files
+tests/riscv-tests-bin/*.dump
+tests/riscv-tests-bin/*.bin
+tests/riscv-tests-bin/*.txt

@@ -1,0 +1,7 @@
+[package]
+name = "rvsim-mem"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rvsim-core = { workspace = true }

@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rvsim-core",
+    "crates/rvsim-mem",
+    "crates/rvsim-cli",
+]
+
+[workspace.dependencies]
+rvsim-core = { path = "crates/rvsim-core" }
+rvsim-mem = { path = "crates/rvsim-mem" }
+goblin = "0.9"

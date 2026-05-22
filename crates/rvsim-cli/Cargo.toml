@@ -1,0 +1,9 @@
+[package]
+name = "rvsim-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rvsim-core = { workspace = true }
+rvsim-mem = { workspace = true }
+goblin = { workspace = true }
