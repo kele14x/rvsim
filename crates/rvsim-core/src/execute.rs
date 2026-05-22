@@ -49,6 +49,62 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             hart.regs.set(rd, hart.regs.get(rs1) & hart.regs.get(rs2));
         }
 
+        // M extension
+        Instruction::Mul { rd, rs1, rs2 } => {
+            hart.regs.set(rd, hart.regs.get(rs1).wrapping_mul(hart.regs.get(rs2)));
+        }
+        Instruction::Mulh { rd, rs1, rs2 } => {
+            let a = hart.regs.get(rs1) as i32 as i64;
+            let b = hart.regs.get(rs2) as i32 as i64;
+            hart.regs.set(rd, ((a * b) >> 32) as u32);
+        }
+        Instruction::Mulhsu { rd, rs1, rs2 } => {
+            let a = hart.regs.get(rs1) as i32 as i64;
+            let b = hart.regs.get(rs2) as u64 as i64;
+            hart.regs.set(rd, ((a * b) >> 32) as u32);
+        }
+        Instruction::Mulhu { rd, rs1, rs2 } => {
+            let a = hart.regs.get(rs1) as u64;
+            let b = hart.regs.get(rs2) as u64;
+            hart.regs.set(rd, ((a * b) >> 32) as u32);
+        }
+        Instruction::Div { rd, rs1, rs2 } => {
+            let a = hart.regs.get(rs1) as i32;
+            let b = hart.regs.get(rs2) as i32;
+            let result = if b == 0 {
+                -1i32 as u32
+            } else if a == i32::MIN && b == -1 {
+                a as u32
+            } else {
+                (a / b) as u32
+            };
+            hart.regs.set(rd, result);
+        }
+        Instruction::Divu { rd, rs1, rs2 } => {
+            let a = hart.regs.get(rs1);
+            let b = hart.regs.get(rs2);
+            let result = if b == 0 { u32::MAX } else { a / b };
+            hart.regs.set(rd, result);
+        }
+        Instruction::Rem { rd, rs1, rs2 } => {
+            let a = hart.regs.get(rs1) as i32;
+            let b = hart.regs.get(rs2) as i32;
+            let result = if b == 0 {
+                a as u32
+            } else if a == i32::MIN && b == -1 {
+                0u32
+            } else {
+                (a % b) as u32
+            };
+            hart.regs.set(rd, result);
+        }
+        Instruction::Remu { rd, rs1, rs2 } => {
+            let a = hart.regs.get(rs1);
+            let b = hart.regs.get(rs2);
+            let result = if b == 0 { a } else { a % b };
+            hart.regs.set(rd, result);
+        }
+
         // I-type arithmetic
         Instruction::Addi { rd, rs1, imm } => {
             hart.regs.set(rd, hart.regs.get(rs1).wrapping_add(imm as u32));

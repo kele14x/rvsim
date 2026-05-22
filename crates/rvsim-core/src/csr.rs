@@ -37,7 +37,7 @@ impl CsrFile {
     pub fn new() -> Self {
         let mut regs = HashMap::new();
         // misa: RV32I (bit 8 = 'I')
-        regs.insert(CSR_MISA, (1 << 30) | (1 << 8)); // MXL=1 (32-bit) | I extension
+        regs.insert(CSR_MISA, (1 << 30) | (1 << 12) | (1 << 8)); // MXL=1 (32-bit) | M | I
         regs.insert(CSR_MHARTID, 0);
         regs.insert(CSR_MSTATUS, 0);
         regs.insert(CSR_MTVEC, 0);

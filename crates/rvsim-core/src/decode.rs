@@ -53,6 +53,16 @@ pub enum Instruction {
     Jal { rd: u8, imm: i32 },
     Jalr { rd: u8, rs1: u8, imm: i32 },
 
+    // M extension
+    Mul { rd: u8, rs1: u8, rs2: u8 },
+    Mulh { rd: u8, rs1: u8, rs2: u8 },
+    Mulhsu { rd: u8, rs1: u8, rs2: u8 },
+    Mulhu { rd: u8, rs1: u8, rs2: u8 },
+    Div { rd: u8, rs1: u8, rs2: u8 },
+    Divu { rd: u8, rs1: u8, rs2: u8 },
+    Rem { rd: u8, rs1: u8, rs2: u8 },
+    Remu { rd: u8, rs1: u8, rs2: u8 },
+
     // System
     Ecall,
     Ebreak,
@@ -258,6 +268,15 @@ pub fn decode(raw: u32) -> Result<Instruction, Trap> {
                 (0b101, 0b0100000) => Ok(Instruction::Sra { rd: d, rs1: r1, rs2: r2 }),
                 (0b110, 0b0000000) => Ok(Instruction::Or { rd: d, rs1: r1, rs2: r2 }),
                 (0b111, 0b0000000) => Ok(Instruction::And { rd: d, rs1: r1, rs2: r2 }),
+                // M extension (funct7 = 0b0000001)
+                (0b000, 0b0000001) => Ok(Instruction::Mul { rd: d, rs1: r1, rs2: r2 }),
+                (0b001, 0b0000001) => Ok(Instruction::Mulh { rd: d, rs1: r1, rs2: r2 }),
+                (0b010, 0b0000001) => Ok(Instruction::Mulhsu { rd: d, rs1: r1, rs2: r2 }),
+                (0b011, 0b0000001) => Ok(Instruction::Mulhu { rd: d, rs1: r1, rs2: r2 }),
+                (0b100, 0b0000001) => Ok(Instruction::Div { rd: d, rs1: r1, rs2: r2 }),
+                (0b101, 0b0000001) => Ok(Instruction::Divu { rd: d, rs1: r1, rs2: r2 }),
+                (0b110, 0b0000001) => Ok(Instruction::Rem { rd: d, rs1: r1, rs2: r2 }),
+                (0b111, 0b0000001) => Ok(Instruction::Remu { rd: d, rs1: r1, rs2: r2 }),
                 _ => Err(Trap::IllegalInstruction),
             }
         }
