@@ -1,5 +1,9 @@
 use crate::cpu::{Hart, PRIV_U, PRIV_S};
-use crate::csr::CSR_MSTATUS;
+use crate::csr::{
+    CSR_MEPC, CSR_SEPC,
+    MSTATUS_SIE_BIT, MSTATUS_MIE_BIT, MSTATUS_SPIE_BIT, MSTATUS_MPIE_BIT,
+    MSTATUS_SPP_BIT, MSTATUS_MPP_SHIFT, MSTATUS_MPP_MASK,
+};
 use crate::decode::Instruction;
 use crate::mem::Memory;
 use crate::trap::Trap;
@@ -353,42 +357,18 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             return Err(Trap::Breakpoint);
         }
         Instruction::Mret => {
-            // Restore PC from mepc
-            let mepc = hart.csrs.read_raw(crate::csr::CSR_MEPC);
-            hart.pc = mepc;
-
-            // Restore privilege and interrupt state from mstatus
-            let mut mstatus = hart.csrs.read_raw(CSR_MSTATUS);
-            // MPP (bits 12:11) → new privilege
-            let mpp = ((mstatus >> 11) & 0x3) as u8;
-            hart.priv_mode = mpp;
-            // MIE = MPIE (bit 3 = bit 7)
-            let mpie = (mstatus >> 7) & 1;
-            mstatus = (mstatus & !(1 << 3)) | (mpie << 3);
-            // MPIE = 1
-            mstatus |= 1 << 7;
-            // MPP = U (0)
-            mstatus &= !(0x3 << 11);
-            hart.csrs.write_raw(CSR_MSTATUS, mstatus);
+            hart.pc = hart.csrs.read_raw(CSR_MEPC);
+            hart.priv_mode = hart.csrs.mstatus_trap_return(
+                MSTATUS_MIE_BIT, MSTATUS_MPIE_BIT,
+                MSTATUS_MPP_SHIFT, MSTATUS_MPP_MASK,
+            );
         }
         Instruction::Sret => {
-            // Restore PC from sepc
-            let sepc = hart.csrs.read_raw(crate::csr::CSR_SEPC);
-            hart.pc = sepc;
-
-            // Restore privilege and interrupt state from mstatus
-            let mut mstatus = hart.csrs.read_raw(CSR_MSTATUS);
-            // SPP (bit 8) → new privilege (0=U, 1=S)
-            let spp = ((mstatus >> 8) & 1) as u8;
-            hart.priv_mode = spp;
-            // SIE = SPIE (bit 1 = bit 5)
-            let spie = (mstatus >> 5) & 1;
-            mstatus = (mstatus & !(1 << 1)) | (spie << 1);
-            // SPIE = 1
-            mstatus |= 1 << 5;
-            // SPP = U (0)
-            mstatus &= !(1 << 8);
-            hart.csrs.write_raw(CSR_MSTATUS, mstatus);
+            hart.pc = hart.csrs.read_raw(CSR_SEPC);
+            hart.priv_mode = hart.csrs.mstatus_trap_return(
+                MSTATUS_SIE_BIT, MSTATUS_SPIE_BIT,
+                MSTATUS_SPP_BIT, 1 << MSTATUS_SPP_BIT,
+            );
         }
         Instruction::SfenceVma => {
             // No-op until MMU is implemented

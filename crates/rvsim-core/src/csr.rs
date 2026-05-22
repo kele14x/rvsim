@@ -32,7 +32,16 @@ pub const CSR_SCAUSE: u16 = 0x142;
 pub const CSR_STVAL: u16 = 0x143;
 pub const CSR_SIP: u16 = 0x144;
 
-// sstatus is a masked view of mstatus; these bits are visible in S-mode
+// mstatus field bit positions
+pub const MSTATUS_SIE_BIT: u32 = 1;
+pub const MSTATUS_MIE_BIT: u32 = 3;
+pub const MSTATUS_SPIE_BIT: u32 = 5;
+pub const MSTATUS_MPIE_BIT: u32 = 7;
+pub const MSTATUS_SPP_BIT: u32 = 8;
+pub const MSTATUS_MPP_SHIFT: u32 = 11;
+pub const MSTATUS_MPP_MASK: u32 = 0x3 << MSTATUS_MPP_SHIFT;
+
+// sstatus is a masked view of mstatus; these bits are visible in S-mode:
 // SIE(1), SPIE(5), UBE(6), SPP(8), VS(10:9), FS(14:13), XS(16:15), SUM(18), MXR(19), SD(31)
 const SSTATUS_MASK: u32 = 0x800D_E762;
 
@@ -123,11 +132,9 @@ impl CsrFile {
             CSR_CYCLE | CSR_CYCLEH | CSR_INSTRET | CSR_INSTRETH => {
                 Err(Trap::IllegalInstruction)
             }
-            // sstatus writes only affect the S-mode visible bits of mstatus
             CSR_SSTATUS => {
-                let mstatus = self.regs.get(&CSR_MSTATUS).copied().unwrap_or(0);
-                let new_mstatus = (mstatus & !SSTATUS_MASK) | (val & SSTATUS_MASK);
-                self.regs.insert(CSR_MSTATUS, new_mstatus);
+                let e = self.regs.entry(CSR_MSTATUS).or_insert(0);
+                *e = (*e & !SSTATUS_MASK) | (val & SSTATUS_MASK);
                 Ok(())
             }
             _ => {
@@ -150,5 +157,27 @@ impl CsrFile {
     /// Direct write of a register (bypasses privilege checks) — used internally by Hart
     pub fn write_raw(&mut self, addr: u16, val: u32) {
         self.regs.insert(addr, val);
+    }
+
+    /// Trap entry: save priv to xPP, copy xIE to xPIE, clear xIE.
+    pub fn mstatus_trap_enter(&mut self, prev_priv: u8, ie_bit: u32, pie_bit: u32, pp_shift: u32, pp_mask: u32) {
+        let mut v = self.read_raw(CSR_MSTATUS);
+        v = (v & !pp_mask) | ((prev_priv as u32) << pp_shift);
+        let ie = (v >> ie_bit) & 1;
+        v = (v & !(1 << pie_bit)) | (ie << pie_bit);
+        v &= !(1 << ie_bit);
+        self.write_raw(CSR_MSTATUS, v);
+    }
+
+    /// Trap return: restore priv from xPP, copy xPIE to xIE, set xPIE=1, clear xPP.
+    pub fn mstatus_trap_return(&mut self, ie_bit: u32, pie_bit: u32, pp_shift: u32, pp_mask: u32) -> u8 {
+        let mut v = self.read_raw(CSR_MSTATUS);
+        let priv_mode = ((v >> pp_shift) & (pp_mask >> pp_shift)) as u8;
+        let pie = (v >> pie_bit) & 1;
+        v = (v & !(1 << ie_bit)) | (pie << ie_bit);
+        v |= 1 << pie_bit;
+        v &= !pp_mask;
+        self.write_raw(CSR_MSTATUS, v);
+        priv_mode
     }
 }

@@ -1,6 +1,8 @@
 use crate::csr::{
-    CsrFile, CSR_MCAUSE, CSR_MEPC, CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC,
+    CsrFile, CSR_MCAUSE, CSR_MEPC, CSR_MTVAL, CSR_MTVEC,
     CSR_MEDELEG, CSR_SCAUSE, CSR_SEPC, CSR_STVAL, CSR_STVEC,
+    MSTATUS_SIE_BIT, MSTATUS_MIE_BIT, MSTATUS_SPIE_BIT, MSTATUS_MPIE_BIT,
+    MSTATUS_SPP_BIT, MSTATUS_MPP_SHIFT, MSTATUS_MPP_MASK,
 };
 use crate::decode::decode;
 use crate::execute::execute;
@@ -51,72 +53,38 @@ impl Hart {
 
         if let Err(trap) = result {
             self.handle_trap(trap, trap_pc);
+        } else {
+            self.instret += 1;
         }
 
         self.cycle += 1;
-        self.instret += 1;
     }
 
     fn handle_trap(&mut self, trap: Trap, trap_pc: u32) {
         let cause = trap.cause_code();
-
-        // Check if this exception should be delegated to S-mode:
-        // Delegate if the corresponding medeleg bit is set AND we're not already in M-mode
-        let medeleg = self.csrs.read_raw(CSR_MEDELEG);
-        let delegate_to_s = self.priv_mode < PRIV_M && (medeleg & (1 << cause)) != 0;
+        let delegate_to_s = self.priv_mode < PRIV_M
+            && (self.csrs.read_raw(CSR_MEDELEG) & (1 << cause)) != 0;
 
         if delegate_to_s {
-            // Route to S-mode handler
             self.csrs.write_raw(CSR_SEPC, trap_pc);
             self.csrs.write_raw(CSR_SCAUSE, cause);
             self.csrs.write_raw(CSR_STVAL, 0);
-
-            // Update mstatus: save current priv in SPP, save SIE in SPIE, clear SIE
-            let mut mstatus = self.csrs.read_raw(CSR_MSTATUS);
-            // SPP = previous privilege (bit 8: 0=U, 1=S)
-            if self.priv_mode == PRIV_S {
-                mstatus |= 1 << 8; // SPP = 1
-            } else {
-                mstatus &= !(1 << 8); // SPP = 0
-            }
-            // SPIE = SIE (bit 5 = bit 1)
-            let sie = (mstatus >> 1) & 1;
-            mstatus = (mstatus & !(1 << 5)) | (sie << 5);
-            // Clear SIE
-            mstatus &= !(1 << 1);
-            self.csrs.write_raw(CSR_MSTATUS, mstatus);
-
-            // Set privilege to S-mode
+            self.csrs.mstatus_trap_enter(
+                self.priv_mode, MSTATUS_SIE_BIT, MSTATUS_SPIE_BIT,
+                MSTATUS_SPP_BIT, 1 << MSTATUS_SPP_BIT,
+            );
             self.priv_mode = PRIV_S;
-
-            // Jump to stvec
-            let stvec = self.csrs.read_raw(CSR_STVEC);
-            let base = stvec & !0x3;
-            self.pc = base;
+            self.pc = self.csrs.read_raw(CSR_STVEC) & !0x3;
         } else {
-            // Route to M-mode handler
             self.csrs.write_raw(CSR_MEPC, trap_pc);
             self.csrs.write_raw(CSR_MCAUSE, cause);
             self.csrs.write_raw(CSR_MTVAL, 0);
-
-            // Update mstatus: save current priv in MPP, save MIE in MPIE, clear MIE
-            let mut mstatus = self.csrs.read_raw(CSR_MSTATUS);
-            // MPP = previous privilege (bits 12:11)
-            mstatus = (mstatus & !(0x3 << 11)) | ((self.priv_mode as u32) << 11);
-            // MPIE = MIE (bit 7 = bit 3)
-            let mie = (mstatus >> 3) & 1;
-            mstatus = (mstatus & !(1 << 7)) | (mie << 7);
-            // Clear MIE
-            mstatus &= !(1 << 3);
-            self.csrs.write_raw(CSR_MSTATUS, mstatus);
-
-            // Set privilege to M-mode
+            self.csrs.mstatus_trap_enter(
+                self.priv_mode, MSTATUS_MIE_BIT, MSTATUS_MPIE_BIT,
+                MSTATUS_MPP_SHIFT, MSTATUS_MPP_MASK,
+            );
             self.priv_mode = PRIV_M;
-
-            // Jump to mtvec
-            let mtvec = self.csrs.read_raw(CSR_MTVEC);
-            let base = mtvec & !0x3;
-            self.pc = base;
+            self.pc = self.csrs.read_raw(CSR_MTVEC) & !0x3;
         }
     }
 
