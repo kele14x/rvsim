@@ -193,7 +193,7 @@ fn main() {
         .syms
         .iter()
         .find(|sym| {
-            elf.strtab.get_at(sym.st_name).map_or(false, |name| name == "tohost")
+            elf.strtab.get_at(sym.st_name) == Some("tohost")
         })
         .map(|sym| sym.st_value as u32);
 

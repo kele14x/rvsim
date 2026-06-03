@@ -180,12 +180,17 @@ pub fn decode(raw: u32) -> Result<Instruction, Trap> {
             imm: imm_j(raw),
         }),
 
-        // JALR
-        0b1100111 => Ok(Instruction::Jalr {
-            rd: rd(raw),
-            rs1: rs1(raw),
-            imm: imm_i(raw),
-        }),
+        // JALR (only funct3=000 is legal)
+        0b1100111 => {
+            if funct3(raw) != 0 {
+                return Err(Trap::IllegalInstruction);
+            }
+            Ok(Instruction::Jalr {
+                rd: rd(raw),
+                rs1: rs1(raw),
+                imm: imm_i(raw),
+            })
+        }
 
         // Branch
         0b1100011 => {
@@ -295,8 +300,11 @@ pub fn decode(raw: u32) -> Result<Instruction, Trap> {
             }
         }
 
-        // AMO (A extension)
+        // AMO (A extension). On RV32 only funct3=010 (.W) is legal.
         0b0101111 => {
+            if funct3(raw) != 0b010 {
+                return Err(Trap::IllegalInstruction);
+            }
             let d = rd(raw);
             let r1 = rs1(raw);
             let r2 = rs2(raw);
@@ -329,12 +337,12 @@ pub fn decode(raw: u32) -> Result<Instruction, Trap> {
                     return Ok(Instruction::SfenceVma);
                 }
                 match raw {
-                    0x00000073 => return Ok(Instruction::Ecall),
-                    0x00100073 => return Ok(Instruction::Ebreak),
-                    0x30200073 => return Ok(Instruction::Mret),
-                    0x10200073 => return Ok(Instruction::Sret),
-                    0x10500073 => return Ok(Instruction::Wfi),
-                    _ => return Err(Trap::IllegalInstruction),
+                    0x00000073 => Ok(Instruction::Ecall),
+                    0x00100073 => Ok(Instruction::Ebreak),
+                    0x30200073 => Ok(Instruction::Mret),
+                    0x10200073 => Ok(Instruction::Sret),
+                    0x10500073 => Ok(Instruction::Wfi),
+                    _ => Err(Trap::IllegalInstruction),
                 }
             } else {
                 let d = rd(raw);

@@ -1,6 +1,7 @@
 use crate::csr::{
-    CsrFile, CSR_MCAUSE, CSR_MEPC, CSR_MIDELEG, CSR_MIE, CSR_MIP, CSR_MSTATUS,
+    CsrFile, CSR_MCAUSE, CSR_MCOUNTINHIBIT, CSR_MEPC, CSR_MIDELEG, CSR_MIE, CSR_MIP, CSR_MSTATUS,
     CSR_MTVAL, CSR_MTVEC, CSR_MEDELEG, CSR_SCAUSE, CSR_SEPC, CSR_STVAL, CSR_STVEC,
+    MCOUNTINHIBIT_CY, MCOUNTINHIBIT_IR,
     MIP_MEIP_BIT, MIP_MSIP_BIT, MIP_MTIP_BIT, MIP_SEIP_BIT, MIP_SSIP_BIT, MIP_STIP_BIT,
     MIP_SW_WRITABLE_PUB,
     MSTATUS_MIE_BIT, MSTATUS_MIE, MSTATUS_MPIE_BIT, MSTATUS_MPP_MASK, MSTATUS_MPP_SHIFT,
@@ -28,7 +29,14 @@ pub struct Hart {
     pub reservation: Option<u32>,
     /// Current privilege mode (0=U, 1=S, 3=M)
     pub priv_mode: u8,
+    /// Set during execute when this instruction wrote mcycle/minstret — the
+    /// explicit write supersedes the implicit retire bump for that counter.
+    /// Bit 0 = cycle, bit 1 = instret. Reset at the start of each step.
+    pub counter_written: u8,
 }
+
+pub const COUNTER_WRITTEN_CYCLE: u8 = 1 << 0;
+pub const COUNTER_WRITTEN_INSTRET: u8 = 1 << 1;
 
 impl Hart {
     pub fn new(start_pc: u32) -> Self {
@@ -40,6 +48,7 @@ impl Hart {
             instret: 0,
             reservation: None,
             priv_mode: PRIV_M,
+            counter_written: 0,
         }
     }
 
@@ -87,10 +96,20 @@ impl Hart {
         let sw = self.csrs.read_raw(CSR_MIP) & MIP_SW_WRITABLE_PUB;
         self.csrs.write_raw(CSR_MIP, sw | pending_hw);
 
+        // mcountinhibit freezes counters when its bit is set.
+        let inhibit = self.csrs.read_raw(CSR_MCOUNTINHIBIT);
+        let tick_cycle = inhibit & MCOUNTINHIBIT_CY == 0;
+        let tick_instret = inhibit & MCOUNTINHIBIT_IR == 0;
+
+        // Clear the per-instruction counter-write flags.
+        self.counter_written = 0;
+
         // Interrupts checked before fetch — taken between instructions.
         if let Some(code) = self.take_interrupt() {
             self.handle_trap(TrapInfo::interrupt(code), self.pc);
-            self.cycle += 1;
+            if tick_cycle {
+                self.cycle += 1;
+            }
             return;
         }
 
@@ -106,11 +125,13 @@ impl Hart {
 
         if let Err(info) = result {
             self.handle_trap(info, trap_pc);
-        } else {
-            self.instret += 1;
+        } else if tick_instret && (self.counter_written & COUNTER_WRITTEN_INSTRET) == 0 {
+            self.instret = self.instret.wrapping_add(1);
         }
 
-        self.cycle += 1;
+        if tick_cycle && (self.counter_written & COUNTER_WRITTEN_CYCLE) == 0 {
+            self.cycle = self.cycle.wrapping_add(1);
+        }
     }
 
     /// Compute the highest-priority deliverable interrupt, or `None`.
@@ -158,6 +179,9 @@ impl Hart {
     }
 
     fn handle_trap(&mut self, info: TrapInfo, trap_pc: u32) {
+        // Any trap entry invalidates an outstanding LR reservation.
+        self.reservation = None;
+
         let cause = info.cause;
         let tval = info.tval;
         let idx = info.cause_index();

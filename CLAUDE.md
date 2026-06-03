@@ -11,7 +11,7 @@ RISC-V simulator (RV32GC + Sv32 MMU) in Rust, targeting Linux boot. Currently im
 ```bash
 cargo build                  # Build all crates
 cargo test                   # Run unit tests (core + mem)
-cargo clippy                 # Lint (ignore manual_is_multiple_of warnings)
+cargo clippy                 # Lint
 cargo run -- <elf-binary>    # Run a RISC-V ELF binary
 ```
 

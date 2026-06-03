@@ -1,6 +1,6 @@
-use crate::cpu::{Hart, PRIV_M, PRIV_U, PRIV_S};
+use crate::cpu::{Hart, COUNTER_WRITTEN_CYCLE, COUNTER_WRITTEN_INSTRET, PRIV_M, PRIV_U, PRIV_S};
 use crate::csr::{
-    CSR_MEPC, CSR_MSTATUS, CSR_SATP, CSR_SEPC,
+    CSR_MCYCLE, CSR_MCYCLEH, CSR_MEPC, CSR_MINSTRET, CSR_MINSTRETH, CSR_MSTATUS, CSR_SATP, CSR_SEPC,
     MSTATUS_SIE_BIT, MSTATUS_MIE_BIT, MSTATUS_SPIE_BIT, MSTATUS_MPIE_BIT,
     MSTATUS_SPP_BIT, MSTATUS_MPP_SHIFT, MSTATUS_MPP_MASK,
     MSTATUS_TSR, MSTATUS_TVM, MSTATUS_TW,
@@ -57,21 +57,31 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
         }
 
         // A extension — translate before any side effects (rd write, reservation set).
+        // LR/SC/AMO require natural alignment (4 bytes for .W).
         Instruction::LrW { rd, rs1 } => {
             let va = hart.regs.get(rs1);
+            if va & 0x3 != 0 {
+                return Err(TrapInfo::new(Trap::LoadAddressMisaligned, va));
+            }
             let val = hart.load32(mem, va)?;
             hart.regs.set(rd, val);
             hart.reservation = Some(va);
         }
         Instruction::ScW { rd, rs1, rs2 } => {
             let va = hart.regs.get(rs1);
-            if hart.reservation == Some(va) {
+            if va & 0x3 != 0 {
+                return Err(TrapInfo::new(Trap::StoreAddressMisaligned, va));
+            }
+            // SC unconditionally clears the reservation, even when the store
+            // itself faults — do it before the fallible store.
+            let matched = hart.reservation == Some(va);
+            hart.reservation = None;
+            if matched {
                 hart.store32(mem, va, hart.regs.get(rs2))?;
                 hart.regs.set(rd, 0); // success
             } else {
                 hart.regs.set(rd, 1); // failure
             }
-            hart.reservation = None;
         }
         Instruction::AmoswapW { rd, rs1, rs2 } => {
             let va = hart.regs.get(rs1);
@@ -169,7 +179,7 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
         Instruction::Divu { rd, rs1, rs2 } => {
             let a = hart.regs.get(rs1);
             let b = hart.regs.get(rs2);
-            let result = if b == 0 { u32::MAX } else { a / b };
+            let result = a.checked_div(b).unwrap_or(u32::MAX);
             hart.regs.set(rd, result);
         }
         Instruction::Rem { rd, rs1, rs2 } => {
@@ -268,8 +278,8 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
         Instruction::Beq { rs1, rs2, imm } => {
             if hart.regs.get(rs1) == hart.regs.get(rs2) {
                 let target = pc.wrapping_add(imm as u32);
-                if target % 4 != 0 {
-                    return Err(Trap::InstructionAddressMisaligned.into());
+                if !target.is_multiple_of(4) {
+                    return Err(TrapInfo::new(Trap::InstructionAddressMisaligned, target));
                 }
                 hart.pc = target;
             }
@@ -277,8 +287,8 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
         Instruction::Bne { rs1, rs2, imm } => {
             if hart.regs.get(rs1) != hart.regs.get(rs2) {
                 let target = pc.wrapping_add(imm as u32);
-                if target % 4 != 0 {
-                    return Err(Trap::InstructionAddressMisaligned.into());
+                if !target.is_multiple_of(4) {
+                    return Err(TrapInfo::new(Trap::InstructionAddressMisaligned, target));
                 }
                 hart.pc = target;
             }
@@ -286,8 +296,8 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
         Instruction::Blt { rs1, rs2, imm } => {
             if (hart.regs.get(rs1) as i32) < (hart.regs.get(rs2) as i32) {
                 let target = pc.wrapping_add(imm as u32);
-                if target % 4 != 0 {
-                    return Err(Trap::InstructionAddressMisaligned.into());
+                if !target.is_multiple_of(4) {
+                    return Err(TrapInfo::new(Trap::InstructionAddressMisaligned, target));
                 }
                 hart.pc = target;
             }
@@ -295,8 +305,8 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
         Instruction::Bge { rs1, rs2, imm } => {
             if (hart.regs.get(rs1) as i32) >= (hart.regs.get(rs2) as i32) {
                 let target = pc.wrapping_add(imm as u32);
-                if target % 4 != 0 {
-                    return Err(Trap::InstructionAddressMisaligned.into());
+                if !target.is_multiple_of(4) {
+                    return Err(TrapInfo::new(Trap::InstructionAddressMisaligned, target));
                 }
                 hart.pc = target;
             }
@@ -304,8 +314,8 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
         Instruction::Bltu { rs1, rs2, imm } => {
             if hart.regs.get(rs1) < hart.regs.get(rs2) {
                 let target = pc.wrapping_add(imm as u32);
-                if target % 4 != 0 {
-                    return Err(Trap::InstructionAddressMisaligned.into());
+                if !target.is_multiple_of(4) {
+                    return Err(TrapInfo::new(Trap::InstructionAddressMisaligned, target));
                 }
                 hart.pc = target;
             }
@@ -313,8 +323,8 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
         Instruction::Bgeu { rs1, rs2, imm } => {
             if hart.regs.get(rs1) >= hart.regs.get(rs2) {
                 let target = pc.wrapping_add(imm as u32);
-                if target % 4 != 0 {
-                    return Err(Trap::InstructionAddressMisaligned.into());
+                if !target.is_multiple_of(4) {
+                    return Err(TrapInfo::new(Trap::InstructionAddressMisaligned, target));
                 }
                 hart.pc = target;
             }
@@ -331,16 +341,16 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
         // Jumps
         Instruction::Jal { rd, imm } => {
             let target = pc.wrapping_add(imm as u32);
-            if target % 4 != 0 {
-                return Err(Trap::InstructionAddressMisaligned.into());
+            if !target.is_multiple_of(4) {
+                return Err(TrapInfo::new(Trap::InstructionAddressMisaligned, target));
             }
             hart.regs.set(rd, hart.pc); // link address (already PC+4)
             hart.pc = target;
         }
         Instruction::Jalr { rd, rs1, imm } => {
             let target = (hart.regs.get(rs1).wrapping_add(imm as u32)) & !1;
-            if target % 4 != 0 {
-                return Err(Trap::InstructionAddressMisaligned.into());
+            if !target.is_multiple_of(4) {
+                return Err(TrapInfo::new(Trap::InstructionAddressMisaligned, target));
             }
             hart.regs.set(rd, hart.pc); // link address (already PC+4)
             hart.pc = target;
@@ -407,14 +417,15 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
         Instruction::Csrrw { rd, rs1, csr } => {
             tvm_check(hart, csr)?;
             let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
-            hart.csrs.write(csr, hart.regs.get(rs1), hart.priv_mode)?;
+            let val = hart.regs.get(rs1);
+            csr_write(hart, csr, val)?;
             hart.regs.set(rd, old);
         }
         Instruction::Csrrs { rd, rs1, csr } => {
             tvm_check(hart, csr)?;
             let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             if rs1 != 0 {
-                hart.csrs.write(csr, old | hart.regs.get(rs1), hart.priv_mode)?;
+                csr_write(hart, csr, old | hart.regs.get(rs1))?;
             }
             hart.regs.set(rd, old);
         }
@@ -422,21 +433,21 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             tvm_check(hart, csr)?;
             let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             if rs1 != 0 {
-                hart.csrs.write(csr, old & !hart.regs.get(rs1), hart.priv_mode)?;
+                csr_write(hart, csr, old & !hart.regs.get(rs1))?;
             }
             hart.regs.set(rd, old);
         }
         Instruction::Csrrwi { rd, uimm, csr } => {
             tvm_check(hart, csr)?;
             let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
-            hart.csrs.write(csr, uimm as u32, hart.priv_mode)?;
+            csr_write(hart, csr, uimm as u32)?;
             hart.regs.set(rd, old);
         }
         Instruction::Csrrsi { rd, uimm, csr } => {
             tvm_check(hart, csr)?;
             let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             if uimm != 0 {
-                hart.csrs.write(csr, old | (uimm as u32), hart.priv_mode)?;
+                csr_write(hart, csr, old | (uimm as u32))?;
             }
             hart.regs.set(rd, old);
         }
@@ -444,12 +455,39 @@ pub fn execute(hart: &mut Hart, mem: &mut dyn Memory, inst: Instruction) -> Resu
             tvm_check(hart, csr)?;
             let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
             if uimm != 0 {
-                hart.csrs.write(csr, old & !(uimm as u32), hart.priv_mode)?;
+                csr_write(hart, csr, old & !(uimm as u32))?;
             }
             hart.regs.set(rd, old);
         }
     }
 
+    Ok(())
+}
+
+/// CSR write with mcycle/minstret alias handling. Writes to those CSRs update
+/// `hart.cycle`/`hart.instret` directly and mark the counter as written so the
+/// implicit post-retire bump is skipped this step.
+fn csr_write(hart: &mut Hart, csr: u16, val: u32) -> Result<(), Trap> {
+    hart.csrs.write(csr, val, hart.priv_mode)?;
+    match csr {
+        CSR_MCYCLE => {
+            hart.cycle = (hart.cycle & 0xFFFF_FFFF_0000_0000) | (val as u64);
+            hart.counter_written |= COUNTER_WRITTEN_CYCLE;
+        }
+        CSR_MCYCLEH => {
+            hart.cycle = (hart.cycle & 0x0000_0000_FFFF_FFFF) | ((val as u64) << 32);
+            hart.counter_written |= COUNTER_WRITTEN_CYCLE;
+        }
+        CSR_MINSTRET => {
+            hart.instret = (hart.instret & 0xFFFF_FFFF_0000_0000) | (val as u64);
+            hart.counter_written |= COUNTER_WRITTEN_INSTRET;
+        }
+        CSR_MINSTRETH => {
+            hart.instret = (hart.instret & 0x0000_0000_FFFF_FFFF) | ((val as u64) << 32);
+            hart.counter_written |= COUNTER_WRITTEN_INSTRET;
+        }
+        _ => {}
+    }
     Ok(())
 }
 
@@ -466,7 +504,7 @@ fn tvm_check(hart: &Hart, csr: u16) -> Result<(), TrapInfo> {
 
 /// AMO helper: translate twice (Load then Store), read, compute new value, write.
 /// Both translations happen up front so that a D-bit fault on the store side is
-/// raised before any architectural side effects.
+/// raised before any architectural side effects. AMOs require 4-byte alignment.
 fn amo_load_store<F>(
     hart: &Hart,
     mem: &mut dyn Memory,
@@ -476,6 +514,9 @@ fn amo_load_store<F>(
 where
     F: FnOnce(u32) -> u32,
 {
+    if va & 0x3 != 0 {
+        return Err(TrapInfo::new(Trap::StoreAddressMisaligned, va));
+    }
     let pa_load = hart.translate(mem, va, AccessType::Load)?;
     let pa_store = hart.translate(mem, va, AccessType::Store)?;
     let old = mem.read32(pa_load)?;

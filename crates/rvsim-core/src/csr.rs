@@ -19,6 +19,9 @@ pub const CSR_MENVCFG: u16 = 0x30A;
 pub const CSR_MSTATUSH: u16 = 0x310;
 pub const CSR_MENVCFGH: u16 = 0x31A;
 pub const CSR_MCOUNTINHIBIT: u16 = 0x320;
+// mcountinhibit bits: setting a bit freezes the corresponding counter.
+pub const MCOUNTINHIBIT_CY: u32 = 1 << 0;
+pub const MCOUNTINHIBIT_IR: u32 = 1 << 2;
 // Performance-counter CSRs (mhpmevent3..31, mhpmcounter3..31, *h variants).
 // OpenSBI probes / clears these during init. We RAZ/WI them.
 pub const CSR_MCYCLE: u16 = 0xB00;
@@ -215,11 +218,32 @@ impl CsrFile {
         if priv_mode < Self::min_priv(addr) {
             return Err(Trap::IllegalInstruction);
         }
+        // mcounteren / scounteren gating for the U/S-visible counters.
+        // M-mode always reads; S-mode needs mcounteren[bit]; U-mode needs both.
+        if priv_mode != 3 {
+            let counter_bit = match addr {
+                CSR_CYCLE | CSR_CYCLEH => Some(0),     // CY
+                CSR_INSTRET | CSR_INSTRETH => Some(2), // IR
+                _ => None,
+            };
+            if let Some(bit) = counter_bit {
+                let mcen = self.regs.get(&CSR_MCOUNTEREN).copied().unwrap_or(0);
+                if (mcen >> bit) & 1 == 0 {
+                    return Err(Trap::IllegalInstruction);
+                }
+                if priv_mode == 0 {
+                    let scen = self.regs.get(&CSR_SCOUNTEREN).copied().unwrap_or(0);
+                    if (scen >> bit) & 1 == 0 {
+                        return Err(Trap::IllegalInstruction);
+                    }
+                }
+            }
+        }
         match addr {
-            CSR_CYCLE => Ok(cycle as u32),
-            CSR_CYCLEH => Ok((cycle >> 32) as u32),
-            CSR_INSTRET => Ok(instret as u32),
-            CSR_INSTRETH => Ok((instret >> 32) as u32),
+            CSR_CYCLE | CSR_MCYCLE => Ok(cycle as u32),
+            CSR_CYCLEH | CSR_MCYCLEH => Ok((cycle >> 32) as u32),
+            CSR_INSTRET | CSR_MINSTRET => Ok(instret as u32),
+            CSR_INSTRETH | CSR_MINSTRETH => Ok((instret >> 32) as u32),
             // sstatus is a masked view of mstatus
             CSR_SSTATUS => {
                 let mstatus = self.regs.get(&CSR_MSTATUS).copied().unwrap_or(0);
@@ -302,6 +326,8 @@ impl CsrFile {
     }
 
     /// Trap return: restore priv from xPP, copy xPIE to xIE, set xPIE=1, clear xPP.
+    /// Also clears MPRV when returning to a mode less privileged than M
+    /// (privileged spec 1.12+).
     pub fn mstatus_trap_return(&mut self, ie_bit: u32, pie_bit: u32, pp_shift: u32, pp_mask: u32) -> u8 {
         let mut v = self.read_raw(CSR_MSTATUS);
         let priv_mode = ((v >> pp_shift) & (pp_mask >> pp_shift)) as u8;
@@ -309,6 +335,9 @@ impl CsrFile {
         v = (v & !(1 << ie_bit)) | (pie << ie_bit);
         v |= 1 << pie_bit;
         v &= !pp_mask;
+        if priv_mode != 3 {
+            v &= !MSTATUS_MPRV;
+        }
         self.write_raw(CSR_MSTATUS, v);
         priv_mode
     }
