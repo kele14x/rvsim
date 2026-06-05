@@ -12,16 +12,19 @@ use rvsim_mem::plic::Plic;
 use rvsim_mem::uart::Uart;
 
 const RAM_BASE: u32 = 0x8000_0000;
-const RAM_SIZE: usize = 128 * 1024 * 1024; // 128 MB
+const RAM_SIZE: usize = 256 * 1024 * 1024; // 256 MB
 /// Default DTB load address: 32 MiB into RAM. Sits comfortably above any
 /// reasonable kernel image and below the rest of usable RAM, matching how
 /// real boards typically lay out the previous-stage handoff.
-const DEFAULT_DTB_ADDR: u32 = 0x8200_0000;
+const DEFAULT_DTB_ADDR: u32 = 0x8600_0000;
 
 /// Default load base for static-PIE firmware (ELF type ET_DYN). OpenSBI's
 /// generic platform expects to be placed here (FW_TEXT_START), then self-
 /// relocates to wherever the previous stage put it.
 const DEFAULT_PIE_BASE: u32 = 0x8000_0000;
+
+/// Default kernel load address — OpenSBI fw_jump expects the payload here.
+const DEFAULT_KERNEL_ADDR: u32 = 0x8040_0000;
 
 struct CliArgs {
     elf_path: String,
@@ -29,6 +32,8 @@ struct CliArgs {
     dtb_addr: u32,
     hartid: u32,
     load_base: Option<u32>,
+    kernel_path: Option<String>,
+    kernel_addr: u32,
 }
 
 fn parse_args() -> CliArgs {
@@ -37,6 +42,8 @@ fn parse_args() -> CliArgs {
     let mut dtb_addr: u32 = DEFAULT_DTB_ADDR;
     let mut hartid: u32 = 0;
     let mut load_base: Option<u32> = None;
+    let mut kernel_path: Option<String> = None;
+    let mut kernel_addr: u32 = DEFAULT_KERNEL_ADDR;
 
     let mut iter = env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -77,6 +84,22 @@ fn parse_args() -> CliArgs {
                     process::exit(2);
                 }));
             }
+            "--kernel" => {
+                kernel_path = Some(iter.next().unwrap_or_else(|| {
+                    eprintln!("--kernel requires a path");
+                    process::exit(2);
+                }));
+            }
+            "--kernel-addr" => {
+                let v = iter.next().unwrap_or_else(|| {
+                    eprintln!("--kernel-addr requires an address");
+                    process::exit(2);
+                });
+                kernel_addr = parse_u32(&v).unwrap_or_else(|| {
+                    eprintln!("--kernel-addr: cannot parse '{}' as u32", v);
+                    process::exit(2);
+                });
+            }
             "-h" | "--help" => {
                 print_usage();
                 process::exit(0);
@@ -101,7 +124,7 @@ fn parse_args() -> CliArgs {
         process::exit(1);
     });
 
-    CliArgs { elf_path, dtb_path, dtb_addr, hartid, load_base }
+    CliArgs { elf_path, dtb_path, dtb_addr, hartid, load_base, kernel_path, kernel_addr }
 }
 
 fn parse_u32(s: &str) -> Option<u32> {
@@ -113,16 +136,20 @@ fn parse_u32(s: &str) -> Option<u32> {
 }
 
 fn print_usage() {
-    eprintln!("Usage: rvsim [--dtb <path>] [--dtb-addr <addr>] [--hartid <n>] [--load-base <addr>] <elf-binary>");
+    eprintln!("Usage: rvsim [options] <elf-binary>");
     eprintln!();
-    eprintln!("  --dtb <path>        Load a Flattened Device Tree blob and pass its");
-    eprintln!("                      address in a1 at boot (a0 = hartid).");
-    eprintln!("  --dtb-addr <addr>   Where to place the DTB in RAM (default 0x{:08x}).",
+    eprintln!("  --dtb <path>          Load a Flattened Device Tree blob and pass its");
+    eprintln!("                        address in a1 at boot (a0 = hartid).");
+    eprintln!("  --dtb-addr <addr>     Where to place the DTB in RAM (default 0x{:08x}).",
         DEFAULT_DTB_ADDR);
-    eprintln!("  --hartid <n>        Value passed in a0 at boot (default 0).");
-    eprintln!("  --load-base <addr>  Override load base for PIE/DYN ELFs");
-    eprintln!("                      (default 0x{:08x}; ignored for fixed-address ELFs).",
+    eprintln!("  --hartid <n>          Value passed in a0 at boot (default 0).");
+    eprintln!("  --load-base <addr>    Override load base for PIE/DYN ELFs");
+    eprintln!("                        (default 0x{:08x}; ignored for fixed-address ELFs).",
         DEFAULT_PIE_BASE);
+    eprintln!("  --kernel <path>       Load a raw kernel image (e.g. Linux Image) at");
+    eprintln!("                        --kernel-addr for OpenSBI fw_jump to boot.");
+    eprintln!("  --kernel-addr <addr>  Where to load the kernel (default 0x{:08x}).",
+        DEFAULT_KERNEL_ADDR);
 }
 
 fn main() {
@@ -189,6 +216,24 @@ fn main() {
         None
     };
 
+    // Load raw kernel image (e.g. Linux arch/riscv/boot/Image) if provided.
+    if let Some(path) = &args.kernel_path {
+        let kernel = fs::read(path).unwrap_or_else(|e| {
+            eprintln!("Failed to read kernel {}: {}", path, e);
+            process::exit(1);
+        });
+        let end = (args.kernel_addr as u64).saturating_add(kernel.len() as u64);
+        if args.kernel_addr < RAM_BASE || end > RAM_BASE as u64 + RAM_SIZE as u64 {
+            eprintln!(
+                "Kernel does not fit in RAM: addr=0x{:08x} len=0x{:x} ram=[0x{:08x},0x{:08x})",
+                args.kernel_addr, kernel.len(), RAM_BASE, RAM_BASE as u64 + RAM_SIZE as u64
+            );
+            process::exit(1);
+        }
+        bus.ram.load(args.kernel_addr, &kernel);
+        eprintln!("Loaded kernel ({} bytes) at 0x{:08x}", kernel.len(), args.kernel_addr);
+    }
+
     // Find tohost symbol
     let tohost_addr = elf
         .syms
@@ -212,7 +257,11 @@ fn main() {
     hart.regs.set(10, args.hartid);
     hart.regs.set(11, dtb_loaded_at.unwrap_or(0));
 
-    let max_cycles: u64 = 10_000_000;
+    let max_cycles: u64 = if args.kernel_path.is_some() {
+        1_000_000_000
+    } else {
+        10_000_000
+    };
     let trace = std::env::var("RVSIM_TRACE").is_ok();
     for _ in 0..max_cycles {
         bus.tick(hart.cycle);
