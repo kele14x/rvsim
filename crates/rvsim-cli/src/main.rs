@@ -8,6 +8,7 @@ use rvsim_core::mem::Memory;
 use rvsim_mem::bus::Bus;
 use rvsim_mem::clint::Clint;
 use rvsim_mem::flat::FlatMemory;
+use rvsim_mem::plic::Plic;
 use rvsim_mem::uart::Uart;
 
 const RAM_BASE: u32 = 0x8000_0000;
@@ -138,7 +139,7 @@ fn main() {
     });
 
     let ram = FlatMemory::new(RAM_SIZE, RAM_BASE);
-    let mut bus = Bus::new(ram, Clint::new(), Uart::stdout());
+    let mut bus = Bus::new(ram, Clint::new(), Plic::new(), Uart::stdout());
 
     // For PIE firmware (ET_DYN, e.g. OpenSBI fw_jump.elf), p_paddr is a
     // *relative* offset — the previous stage chooses the load base. Default

@@ -26,7 +26,7 @@
             reg = <0>;
             status = "okay";
             compatible = "riscv";
-            riscv,isa = "rv32ima_zicsr_zifencei";
+            riscv,isa = "rv32imafd_zicsr_zifencei";
             mmu-type = "riscv,sv32";
 
             cpu0_intc: interrupt-controller {
@@ -55,12 +55,23 @@
             interrupts-extended = <&cpu0_intc 3 &cpu0_intc 7>;
         };
 
+        plic: plic@c000000 {
+            compatible = "sifive,plic-1.0.0", "riscv,plic0";
+            reg = <0x0c000000 0x4000000>;
+            #interrupt-cells = <1>;
+            interrupt-controller;
+            interrupts-extended = <&cpu0_intc 11 &cpu0_intc 9>;
+            riscv,ndev = <31>;
+        };
+
         serial@10000000 {
             compatible = "ns16550a";
             reg = <0x10000000 0x100>;
             clock-frequency = <3686400>;
             reg-shift = <0>;
             reg-io-width = <1>;
+            interrupt-parent = <&plic>;
+            interrupts = <10>;
         };
     };
 };
