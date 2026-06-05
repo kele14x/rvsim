@@ -4,9 +4,12 @@
 CARGO        ?= cargo
 CARGO_FLAGS  ?=
 
-RISCV_TESTS_DIR := tests/riscv-tests-bin
-OPENSBI_ELF     := tests/opensbi-bin/fw_jump.elf
-OPENSBI_DTB     := tests/opensbi-bin/rvsim.dtb
+RISCV_TESTS_DIR    := tests/riscv-tests-bin
+# Suite prefixes to run under `riscv-tests`. Override on the command line, e.g.
+#   make riscv-tests RISCV_TEST_SUITES='rv32ui-p rv32uc-p'
+RISCV_TEST_SUITES  ?= rv32ui-p rv32um-p rv32ua-p rv32uc-p rv32uf-p rv32ud-p rv32mi-p rv32si-p
+OPENSBI_ELF        := tests/opensbi-bin/fw_jump.elf
+OPENSBI_DTB        := tests/opensbi-bin/rvsim.dtb
 
 .PHONY: help build test clippy fmt check riscv-tests opensbi clean
 
@@ -35,21 +38,24 @@ fmt:
 
 check: build test clippy
 
-# Walks every ELF under tests/riscv-tests-bin (skipping .dump/.bin/.txt
-# siblings), runs it, and prints only failures plus a PASS/FAIL summary.
+# Walks the suites listed in RISCV_TEST_SUITES (skipping .dump/.bin/.txt
+# siblings), runs each ELF, and prints only failures plus a PASS/FAIL summary.
 # Exits non-zero if any test failed.
 riscv-tests:
 	@$(CARGO) build --quiet $(CARGO_FLAGS)
 	@pass=0; fail=0; fails=""; \
-	for f in $(RISCV_TESTS_DIR)/rv32*-p-*; do \
-		case "$$f" in *.dump|*.bin|*.txt) continue;; esac; \
-		result=$$($(CARGO) run --quiet $(CARGO_FLAGS) -- "$$f" 2>&1 | tail -1); \
-		if [ "$$result" = "PASS" ]; then \
-			pass=$$((pass+1)); \
-		else \
-			fail=$$((fail+1)); \
-			fails="$$fails\n  $$(basename $$f): $$result"; \
-		fi; \
+	for suite in $(RISCV_TEST_SUITES); do \
+		for f in $(RISCV_TESTS_DIR)/$$suite-*; do \
+			case "$$f" in *.dump|*.bin|*.txt) continue;; esac; \
+			[ -f "$$f" ] || continue; \
+			result=$$($(CARGO) run --quiet $(CARGO_FLAGS) -- "$$f" 2>&1 | tail -1); \
+			if [ "$$result" = "PASS" ]; then \
+				pass=$$((pass+1)); \
+			else \
+				fail=$$((fail+1)); \
+				fails="$$fails\n  $$(basename $$f): $$result"; \
+			fi; \
+		done; \
 	done; \
 	if [ $$fail -gt 0 ]; then printf "Failures:$$fails\n"; fi; \
 	echo "riscv-tests: PASS=$$pass FAIL=$$fail"; \

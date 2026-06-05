@@ -7,11 +7,11 @@ use crate::csr::{
     MSTATUS_MIE_BIT, MSTATUS_MIE, MSTATUS_MPIE_BIT, MSTATUS_MPP_MASK, MSTATUS_MPP_SHIFT,
     MSTATUS_SIE_BIT, MSTATUS_SIE, MSTATUS_SPIE_BIT, MSTATUS_SPP_BIT,
 };
-use crate::decode::decode;
+use crate::decode::{decode, expand_compressed};
 use crate::execute::execute;
 use crate::mem::Memory;
 use crate::mmu::{translate, AccessType};
-use crate::reg::RegFile;
+use crate::reg::{RegFile, FpRegFile};
 use crate::trap::{Trap, TrapInfo};
 
 /// Privilege levels
@@ -22,6 +22,7 @@ pub const PRIV_M: u8 = 3;
 pub struct Hart {
     pub pc: u32,
     pub regs: RegFile,
+    pub fregs: FpRegFile,
     pub csrs: CsrFile,
     pub cycle: u64,
     pub instret: u64,
@@ -43,6 +44,7 @@ impl Hart {
         Self {
             pc: start_pc,
             regs: RegFile::new(),
+            fregs: FpRegFile::new(),
             csrs: CsrFile::new(),
             cycle: 0,
             instret: 0,
@@ -57,10 +59,28 @@ impl Hart {
         translate(self, mem, va, access)
     }
 
-    /// Fetch a 32-bit instruction at `self.pc`, translating through the MMU first.
-    pub fn fetch32(&self, mem: &mut dyn Memory) -> Result<u32, TrapInfo> {
-        let pa = self.translate(mem, self.pc, AccessType::Fetch)?;
-        mem.read32(pa).map_err(|_| TrapInfo::new(Trap::InstructionAccessFault, self.pc))
+    /// Fetch the next instruction at `self.pc`, returning the (expanded) 32-bit
+    /// form plus its width in bytes (2 for compressed, 4 for full). Halfwords
+    /// are translated separately so a 4-byte instruction can straddle a page
+    /// boundary — the second halfword may fault independently with the correct
+    /// VA in tval.
+    pub fn fetch_inst(&self, mem: &mut dyn Memory) -> Result<(u32, u8), TrapInfo> {
+        let pa_lo = self.translate(mem, self.pc, AccessType::Fetch)?;
+        let lo = mem
+            .read16(pa_lo)
+            .map_err(|_| TrapInfo::new(Trap::InstructionAccessFault, self.pc))?;
+
+        if lo & 0x3 != 0x3 {
+            let raw = expand_compressed(lo).map_err(|t| TrapInfo::new(t, lo as u32))?;
+            return Ok((raw, 2));
+        }
+
+        let pc_hi = self.pc.wrapping_add(2);
+        let pa_hi = self.translate(mem, pc_hi, AccessType::Fetch)?;
+        let hi = mem
+            .read16(pa_hi)
+            .map_err(|_| TrapInfo::new(Trap::InstructionAccessFault, pc_hi))?;
+        Ok((((hi as u32) << 16) | lo as u32, 4))
     }
 
     pub fn load8(&self, mem: &mut dyn Memory, va: u32) -> Result<u8, TrapInfo> {
@@ -86,6 +106,16 @@ impl Hart {
     pub fn store32(&self, mem: &mut dyn Memory, va: u32, val: u32) -> Result<(), TrapInfo> {
         let pa = self.translate(mem, va, AccessType::Store)?;
         Ok(mem.write32(pa, val)?)
+    }
+    pub fn load64(&self, mem: &mut dyn Memory, va: u32) -> Result<u64, TrapInfo> {
+        let lo = self.load32(mem, va)? as u64;
+        let hi = self.load32(mem, va.wrapping_add(4))? as u64;
+        Ok((hi << 32) | lo)
+    }
+    pub fn store64(&self, mem: &mut dyn Memory, va: u32, val: u64) -> Result<(), TrapInfo> {
+        self.store32(mem, va, val as u32)?;
+        self.store32(mem, va.wrapping_add(4), (val >> 32) as u32)?;
+        Ok(())
     }
 
     /// Drive one instruction. `pending_hw` carries mip bits set by hardware
@@ -116,10 +146,10 @@ impl Hart {
         let trap_pc = self.pc;
 
         let result = (|| -> Result<(), TrapInfo> {
-            let raw = self.fetch32(mem)?;
+            let (raw, width) = self.fetch_inst(mem)?;
             let inst = decode(raw)?;
-            self.pc = self.pc.wrapping_add(4);
-            execute(self, mem, inst)?;
+            self.pc = self.pc.wrapping_add(width as u32);
+            execute(self, mem, inst, trap_pc)?;
             Ok(())
         })();
 

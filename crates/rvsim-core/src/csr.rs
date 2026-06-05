@@ -2,6 +2,11 @@ use std::collections::HashMap;
 
 use crate::trap::Trap;
 
+// F-extension CSRs
+pub const CSR_FFLAGS: u16 = 0x001;
+pub const CSR_FRM: u16 = 0x002;
+pub const CSR_FCSR: u16 = 0x003;
+
 pub const CSR_CYCLE: u16 = 0xC00;
 pub const CSR_CYCLEH: u16 = 0xC80;
 pub const CSR_INSTRET: u16 = 0xC02;
@@ -84,6 +89,10 @@ pub const MSTATUS_MXR: u32 = 1 << 19;
 pub const MSTATUS_TVM: u32 = 1 << 20;
 pub const MSTATUS_TW: u32 = 1 << 21;
 pub const MSTATUS_TSR: u32 = 1 << 22;
+pub const MSTATUS_FS_SHIFT: u32 = 13;
+pub const MSTATUS_FS_MASK: u32 = 0x3 << MSTATUS_FS_SHIFT;
+pub const MSTATUS_FS_DIRTY: u32 = 0x3 << MSTATUS_FS_SHIFT;
+pub const MSTATUS_SD: u32 = 1 << 31;
 
 // mip / mie bit positions
 pub const MIP_SSIP_BIT: u32 = 1;
@@ -116,6 +125,14 @@ const SSTATUS_MASK: u32 = 0x800D_E762;
 // sie / sip are masked views of mie / mip: SSIP/STIP/SEIP only.
 const SIE_SIP_MASK: u32 = MIP_SSIP | MIP_STIP | MIP_SEIP;
 
+fn mstatus_with_sd(v: u32) -> u32 {
+    if v & MSTATUS_FS_MASK == MSTATUS_FS_DIRTY {
+        v | MSTATUS_SD
+    } else {
+        v & !MSTATUS_SD
+    }
+}
+
 pub struct CsrFile {
     regs: HashMap<u16, u32>,
 }
@@ -129,7 +146,7 @@ impl Default for CsrFile {
 impl CsrFile {
     pub fn new() -> Self {
         let mut regs = HashMap::new();
-        // misa: RV32IMASU. Treated as WARL — writes are ignored (see write()).
+        // misa: RV32IMACSU. Treated as WARL — writes are ignored (see write()).
         // S and U are required for OpenSBI: it probes misa to decide whether
         // to bring up an S-mode payload, and refuses to run the lottery /
         // coldboot path otherwise.
@@ -140,8 +157,15 @@ impl CsrFile {
                 | (1 << 18) // S
                 | (1 << 12) // M
                 | (1 << 8)  // I
+                | (1 << 5)  // F
+                | (1 << 3)  // D
+                | (1 << 2)  // C
                 | (1 << 0), // A
         );
+        // F-extension CSRs. Canonical value lives in FCSR; fflags/frm alias into it.
+        regs.insert(CSR_FCSR, 0);
+        regs.insert(CSR_FFLAGS, 0);
+        regs.insert(CSR_FRM, 0);
         // Read-only-zero machine ID CSRs.
         regs.insert(CSR_MVENDORID, 0);
         regs.insert(CSR_MARCHID, 0);
@@ -244,10 +268,26 @@ impl CsrFile {
             CSR_CYCLEH | CSR_MCYCLEH => Ok((cycle >> 32) as u32),
             CSR_INSTRET | CSR_MINSTRET => Ok(instret as u32),
             CSR_INSTRETH | CSR_MINSTRETH => Ok((instret >> 32) as u32),
+            CSR_FCSR => {
+                let fcsr = self.regs.get(&CSR_FCSR).copied().unwrap_or(0);
+                Ok(fcsr & 0xFF)
+            }
+            CSR_FFLAGS => {
+                let fcsr = self.regs.get(&CSR_FCSR).copied().unwrap_or(0);
+                Ok(fcsr & 0x1F)
+            }
+            CSR_FRM => {
+                let fcsr = self.regs.get(&CSR_FCSR).copied().unwrap_or(0);
+                Ok((fcsr >> 5) & 0x7)
+            }
+            CSR_MSTATUS => {
+                let v = self.regs.get(&CSR_MSTATUS).copied().unwrap_or(0);
+                Ok(mstatus_with_sd(v))
+            }
             // sstatus is a masked view of mstatus
             CSR_SSTATUS => {
                 let mstatus = self.regs.get(&CSR_MSTATUS).copied().unwrap_or(0);
-                Ok(mstatus & SSTATUS_MASK)
+                Ok(mstatus_with_sd(mstatus) & SSTATUS_MASK)
             }
             // sie / sip are masked views of mie / mip
             CSR_SIE => Ok(self.regs.get(&CSR_MIE).copied().unwrap_or(0) & SIE_SIP_MASK),
@@ -270,6 +310,20 @@ impl CsrFile {
             }
             // misa is WARL with no software-toggleable extensions: writes are silently ignored.
             CSR_MISA => Ok(()),
+            CSR_FCSR => {
+                self.regs.insert(CSR_FCSR, val & 0xFF);
+                Ok(())
+            }
+            CSR_FFLAGS => {
+                let e = self.regs.entry(CSR_FCSR).or_insert(0);
+                *e = (*e & !0x1F) | (val & 0x1F);
+                Ok(())
+            }
+            CSR_FRM => {
+                let e = self.regs.entry(CSR_FCSR).or_insert(0);
+                *e = (*e & !0xE0) | ((val & 0x7) << 5);
+                Ok(())
+            }
             CSR_SSTATUS => {
                 let e = self.regs.entry(CSR_MSTATUS).or_insert(0);
                 *e = (*e & !SSTATUS_MASK) | (val & SSTATUS_MASK);
