@@ -6,8 +6,12 @@
     compatible = "rvsim,virt";
     model = "rvsim";
 
+    aliases {
+        serial0 = &uart0;
+    };
+
     chosen {
-        bootargs = "";
+        bootargs = "console=ttyS0 earlycon";
         stdout-path = "/soc/serial@10000000";
     };
 
@@ -64,7 +68,7 @@
             riscv,ndev = <31>;
         };
 
-        serial@10000000 {
+        uart0: serial@10000000 {
             compatible = "ns16550a";
             reg = <0x10000000 0x100>;
             clock-frequency = <3686400>;

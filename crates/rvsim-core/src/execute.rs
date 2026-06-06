@@ -968,14 +968,14 @@ pub fn execute(
         // CSR instructions
         Instruction::Csrrw { rd, rs1, csr } => {
             tvm_check(hart, csr)?;
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
+            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
             let val = hart.regs.get(rs1);
             csr_write(hart, csr, val)?;
             hart.regs.set(rd, old);
         }
         Instruction::Csrrs { rd, rs1, csr } => {
             tvm_check(hart, csr)?;
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
+            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
             if rs1 != 0 {
                 csr_write(hart, csr, old | hart.regs.get(rs1))?;
             }
@@ -983,7 +983,7 @@ pub fn execute(
         }
         Instruction::Csrrc { rd, rs1, csr } => {
             tvm_check(hart, csr)?;
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
+            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
             if rs1 != 0 {
                 csr_write(hart, csr, old & !hart.regs.get(rs1))?;
             }
@@ -991,13 +991,13 @@ pub fn execute(
         }
         Instruction::Csrrwi { rd, uimm, csr } => {
             tvm_check(hart, csr)?;
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
+            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
             csr_write(hart, csr, uimm as u32)?;
             hart.regs.set(rd, old);
         }
         Instruction::Csrrsi { rd, uimm, csr } => {
             tvm_check(hart, csr)?;
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
+            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
             if uimm != 0 {
                 csr_write(hart, csr, old | (uimm as u32))?;
             }
@@ -1005,7 +1005,7 @@ pub fn execute(
         }
         Instruction::Csrrci { rd, uimm, csr } => {
             tvm_check(hart, csr)?;
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.priv_mode)?;
+            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
             if uimm != 0 {
                 csr_write(hart, csr, old & !(uimm as u32))?;
             }

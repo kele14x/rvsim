@@ -30,6 +30,9 @@ pub struct Hart {
     pub reservation: Option<u32>,
     /// Current privilege mode (0=U, 1=S, 3=M)
     pub priv_mode: u8,
+    /// Wall-clock time from CLINT mtime — independent of mcountinhibit.
+    /// Updated by the simulation loop each step.
+    pub mtime: u64,
     /// Set during execute when this instruction wrote mcycle/minstret — the
     /// explicit write supersedes the implicit retire bump for that counter.
     /// Bit 0 = cycle, bit 1 = instret. Reset at the start of each step.
@@ -48,6 +51,7 @@ impl Hart {
             csrs: CsrFile::new(),
             cycle: 0,
             instret: 0,
+            mtime: 0,
             reservation: None,
             priv_mode: PRIV_M,
             counter_written: 0,

@@ -8,7 +8,9 @@ pub const CSR_FRM: u16 = 0x002;
 pub const CSR_FCSR: u16 = 0x003;
 
 pub const CSR_CYCLE: u16 = 0xC00;
+pub const CSR_TIME: u16 = 0xC01;
 pub const CSR_CYCLEH: u16 = 0xC80;
+pub const CSR_TIMEH: u16 = 0xC81;
 pub const CSR_INSTRET: u16 = 0xC02;
 pub const CSR_INSTRETH: u16 = 0xC82;
 pub const CSR_MVENDORID: u16 = 0xF11;
@@ -237,7 +239,7 @@ impl CsrFile {
         }
     }
 
-    pub fn read(&self, addr: u16, cycle: u64, instret: u64, priv_mode: u8) -> Result<u32, Trap> {
+    pub fn read(&self, addr: u16, cycle: u64, instret: u64, mtime: u64, priv_mode: u8) -> Result<u32, Trap> {
         // Privilege check
         if priv_mode < Self::min_priv(addr) {
             return Err(Trap::IllegalInstruction);
@@ -247,6 +249,7 @@ impl CsrFile {
         if priv_mode != 3 {
             let counter_bit = match addr {
                 CSR_CYCLE | CSR_CYCLEH => Some(0),     // CY
+                CSR_TIME | CSR_TIMEH => Some(1),       // TM
                 CSR_INSTRET | CSR_INSTRETH => Some(2), // IR
                 _ => None,
             };
@@ -266,6 +269,8 @@ impl CsrFile {
         match addr {
             CSR_CYCLE | CSR_MCYCLE => Ok(cycle as u32),
             CSR_CYCLEH | CSR_MCYCLEH => Ok((cycle >> 32) as u32),
+            CSR_TIME => Ok(mtime as u32),
+            CSR_TIMEH => Ok((mtime >> 32) as u32),
             CSR_INSTRET | CSR_MINSTRET => Ok(instret as u32),
             CSR_INSTRETH | CSR_MINSTRETH => Ok((instret >> 32) as u32),
             CSR_FCSR => {

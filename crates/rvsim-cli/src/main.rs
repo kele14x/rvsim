@@ -16,7 +16,7 @@ const RAM_SIZE: usize = 256 * 1024 * 1024; // 256 MB
 /// Default DTB load address: 32 MiB into RAM. Sits comfortably above any
 /// reasonable kernel image and below the rest of usable RAM, matching how
 /// real boards typically lay out the previous-stage handoff.
-const DEFAULT_DTB_ADDR: u32 = 0x8600_0000;
+const DEFAULT_DTB_ADDR: u32 = 0x8220_0000;
 
 /// Default load base for static-PIE firmware (ELF type ET_DYN). OpenSBI's
 /// generic platform expects to be placed here (FW_TEXT_START), then self-
@@ -34,6 +34,7 @@ struct CliArgs {
     load_base: Option<u32>,
     kernel_path: Option<String>,
     kernel_addr: u32,
+    max_cycles: Option<u64>,
 }
 
 fn parse_args() -> CliArgs {
@@ -44,6 +45,7 @@ fn parse_args() -> CliArgs {
     let mut load_base: Option<u32> = None;
     let mut kernel_path: Option<String> = None;
     let mut kernel_addr: u32 = DEFAULT_KERNEL_ADDR;
+    let mut max_cycles: Option<u64> = None;
 
     let mut iter = env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -100,6 +102,16 @@ fn parse_args() -> CliArgs {
                     process::exit(2);
                 });
             }
+            "--max-cycles" => {
+                let v = iter.next().unwrap_or_else(|| {
+                    eprintln!("--max-cycles requires a number");
+                    process::exit(2);
+                });
+                max_cycles = Some(v.parse::<u64>().unwrap_or_else(|_| {
+                    eprintln!("--max-cycles: cannot parse '{}' as u64", v);
+                    process::exit(2);
+                }));
+            }
             "-h" | "--help" => {
                 print_usage();
                 process::exit(0);
@@ -124,7 +136,7 @@ fn parse_args() -> CliArgs {
         process::exit(1);
     });
 
-    CliArgs { elf_path, dtb_path, dtb_addr, hartid, load_base, kernel_path, kernel_addr }
+    CliArgs { elf_path, dtb_path, dtb_addr, hartid, load_base, kernel_path, kernel_addr, max_cycles }
 }
 
 fn parse_u32(s: &str) -> Option<u32> {
@@ -150,6 +162,7 @@ fn print_usage() {
     eprintln!("                        --kernel-addr for OpenSBI fw_jump to boot.");
     eprintln!("  --kernel-addr <addr>  Where to load the kernel (default 0x{:08x}).",
         DEFAULT_KERNEL_ADDR);
+    eprintln!("  --max-cycles <n>      Maximum simulation cycles (default 10M, 10B with --kernel).");
 }
 
 fn main() {
@@ -194,29 +207,8 @@ fn main() {
         }
     }
 
-    // Optional DTB handoff: load the blob at dtb_addr so the supervisor can find it via a1.
-    let dtb_loaded_at: Option<u32> = if let Some(path) = &args.dtb_path {
-        let dtb = fs::read(path).unwrap_or_else(|e| {
-            eprintln!("Failed to read DTB {}: {}", path, e);
-            process::exit(1);
-        });
-        // Refuse to overlap the RAM image we just loaded — bus.ram.load would
-        // happily clobber kernel bytes otherwise.
-        let end = (args.dtb_addr as u64).saturating_add(dtb.len() as u64);
-        if args.dtb_addr < RAM_BASE || end > RAM_BASE as u64 + RAM_SIZE as u64 {
-            eprintln!(
-                "DTB does not fit in RAM: addr=0x{:08x} len=0x{:x} ram=[0x{:08x},0x{:08x})",
-                args.dtb_addr, dtb.len(), RAM_BASE, RAM_BASE as u64 + RAM_SIZE as u64
-            );
-            process::exit(1);
-        }
-        bus.ram.load(args.dtb_addr, &dtb);
-        Some(args.dtb_addr)
-    } else {
-        None
-    };
-
-    // Load raw kernel image (e.g. Linux arch/riscv/boot/Image) if provided.
+    // Load raw kernel image first (before DTB), so the DTB can overwrite
+    // the tail of the kernel if they overlap in memory.
     if let Some(path) = &args.kernel_path {
         let kernel = fs::read(path).unwrap_or_else(|e| {
             eprintln!("Failed to read kernel {}: {}", path, e);
@@ -233,6 +225,26 @@ fn main() {
         bus.ram.load(args.kernel_addr, &kernel);
         eprintln!("Loaded kernel ({} bytes) at 0x{:08x}", kernel.len(), args.kernel_addr);
     }
+
+    // DTB loaded after kernel so it wins if they overlap.
+    let dtb_loaded_at: Option<u32> = if let Some(path) = &args.dtb_path {
+        let dtb = fs::read(path).unwrap_or_else(|e| {
+            eprintln!("Failed to read DTB {}: {}", path, e);
+            process::exit(1);
+        });
+        let end = (args.dtb_addr as u64).saturating_add(dtb.len() as u64);
+        if args.dtb_addr < RAM_BASE || end > RAM_BASE as u64 + RAM_SIZE as u64 {
+            eprintln!(
+                "DTB does not fit in RAM: addr=0x{:08x} len=0x{:x} ram=[0x{:08x},0x{:08x})",
+                args.dtb_addr, dtb.len(), RAM_BASE, RAM_BASE as u64 + RAM_SIZE as u64
+            );
+            process::exit(1);
+        }
+        bus.ram.load(args.dtb_addr, &dtb);
+        Some(args.dtb_addr)
+    } else {
+        None
+    };
 
     // Find tohost symbol
     let tohost_addr = elf
@@ -257,14 +269,19 @@ fn main() {
     hart.regs.set(10, args.hartid);
     hart.regs.set(11, dtb_loaded_at.unwrap_or(0));
 
-    let max_cycles: u64 = if args.kernel_path.is_some() {
-        1_000_000_000
+    let max_cycles: u64 = args.max_cycles.unwrap_or(if args.kernel_path.is_some() {
+        10_000_000_000
     } else {
         10_000_000
-    };
+    });
     let trace = std::env::var("RVSIM_TRACE").is_ok();
+    let sbi_log = std::env::var("RVSIM_SBI_LOG").is_ok();
+    let mut cycle_count: u64 = 0;
+    let mut last_pcs: [u32; 8] = [0; 8];
+    let mut pc_idx: usize = 0;
     for _ in 0..max_cycles {
-        bus.tick(hart.cycle);
+        bus.tick(cycle_count);
+        hart.mtime = cycle_count;
         let pending = bus.pending_interrupts();
         if trace {
             eprintln!("pc=0x{:08x} priv={} mstatus=0x{:08x} mip=0x{:x} mie=0x{:x}",
@@ -273,7 +290,20 @@ fn main() {
                 hart.csrs.read_raw(rvsim_core::csr::CSR_MIP),
                 hart.csrs.read_raw(rvsim_core::csr::CSR_MIE));
         }
+        let prev_priv = hart.priv_mode;
+        let a6 = hart.regs.get(6);
+        let a7 = hart.regs.get(7);
+        let a0 = hart.regs.get(10);
+        let a1 = hart.regs.get(11);
+        let ecall_pc = hart.pc;
+        last_pcs[pc_idx] = hart.pc;
+        pc_idx = (pc_idx + 1) & 7;
         hart.step(&mut bus, pending);
+        cycle_count += 1;
+        if sbi_log && prev_priv == 1 && hart.priv_mode == 3 {
+            eprintln!("[{}] SBI ecall @ 0x{:08x}: eid=0x{:08x} fid=0x{:08x} a0=0x{:08x} a1=0x{:08x}",
+                cycle_count, ecall_pc, a7, a6, a0, a1);
+        }
 
         // Check tohost after each step
         if let Some(addr) = tohost_addr {
@@ -292,5 +322,33 @@ fn main() {
     }
 
     eprintln!("TIMEOUT: exceeded {} cycles", max_cycles);
+    eprintln!("  pc=0x{:08x}  priv={}  cycle={}",
+        hart.pc, hart.priv_mode, hart.cycle);
+    eprintln!("  mstatus=0x{:08x}  mip=0x{:08x}  mie=0x{:08x}",
+        hart.csrs.read_raw(rvsim_core::csr::CSR_MSTATUS),
+        hart.csrs.read_raw(rvsim_core::csr::CSR_MIP),
+        hart.csrs.read_raw(rvsim_core::csr::CSR_MIE));
+    eprintln!("  mideleg=0x{:08x}  sepc=0x{:08x}  scause=0x{:08x}",
+        hart.csrs.read_raw(rvsim_core::csr::CSR_MIDELEG),
+        hart.csrs.read_raw(rvsim_core::csr::CSR_SEPC),
+        hart.csrs.read_raw(rvsim_core::csr::CSR_SCAUSE));
+    eprint!("  last PCs:");
+    for i in 0..8 {
+        eprint!(" 0x{:08x}", last_pcs[(pc_idx + i) & 7]);
+    }
+    eprintln!();
+    let dump_start = hart.pc & !0xF;
+    eprint!("  bytes at 0x{:08x}:", dump_start);
+    for off in 0..32u32 {
+        let va = dump_start.wrapping_add(off);
+        match hart.translate(&bus, va, rvsim_core::mmu::AccessType::Fetch) {
+            Ok(pa) => match bus.read8(pa) {
+                Ok(b) => eprint!(" {:02x}", b),
+                Err(_) => eprint!(" ??"),
+            },
+            Err(_) => eprint!(" ??"),
+        }
+    }
+    eprintln!();
     process::exit(1);
 }

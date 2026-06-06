@@ -35,11 +35,22 @@ const REG_SCR: u32 = 7;
 const LSR_DEFAULT: u8 = (1 << 6) | (1 << 5);
 const MSR_DEFAULT: u8 = 0xB0; // CD, DSR, CTS asserted
 
+const LCR_DLAB: u8 = 1 << 7;
+const MCR_LOOP: u8 = 1 << 4;
+
+const IER_THRE: u8 = 1 << 1;
+const IIR_NONE: u8 = 0x01;
+const IIR_THRE: u8 = 0x02;
+
 struct State {
     ier: u8,
+    fcr: u8,
     lcr: u8,
     mcr: u8,
     scr: u8,
+    dll: u8,
+    dlm: u8,
+    thre_ip: bool,
     sink: Box<dyn Write + Send>,
 }
 
@@ -56,41 +67,130 @@ impl Uart {
         Self {
             state: RefCell::new(State {
                 ier: 0,
+                fcr: 0,
                 lcr: 0,
                 mcr: 0,
                 scr: 0,
+                dll: 0,
+                dlm: 0,
+                thre_ip: false,
                 sink,
             }),
         }
     }
 
-    pub fn read8(&self, offset: u32) -> Result<u8, Trap> {
+    pub fn interrupt_pending(&self) -> bool {
         let s = self.state.borrow();
-        let val = match offset & 0x7 {
-            REG_THR_RBR => 0, // no RX
-            REG_IER => s.ier,
-            REG_IIR_FCR => 0x01, // "no interrupt pending"
-            REG_LCR => s.lcr,
-            REG_MCR => s.mcr,
+        s.ier & IER_THRE != 0 && s.thre_ip
+    }
+
+    pub fn read8(&self, offset: u32) -> Result<u8, Trap> {
+        let reg = offset & 0x7;
+        let val = match reg {
+            REG_THR_RBR => {
+                let s = self.state.borrow();
+                if s.lcr & LCR_DLAB != 0 { s.dll } else { 0 }
+            }
+            REG_IER => {
+                let s = self.state.borrow();
+                if s.lcr & LCR_DLAB != 0 { s.dlm } else { s.ier }
+            }
+            REG_IIR_FCR => {
+                let mut s = self.state.borrow_mut();
+                let fifo_bits = if s.fcr & 0x01 != 0 { 0xC0u8 } else { 0 };
+                if s.ier & IER_THRE != 0 && s.thre_ip {
+                    s.thre_ip = false;
+                    IIR_THRE | fifo_bits
+                } else {
+                    IIR_NONE | fifo_bits
+                }
+            }
+            REG_LCR => self.state.borrow().lcr,
+            REG_MCR => self.state.borrow().mcr,
             REG_LSR => LSR_DEFAULT,
-            REG_MSR => MSR_DEFAULT,
-            REG_SCR => s.scr,
+            REG_MSR => {
+                let s = self.state.borrow();
+                if s.mcr & MCR_LOOP != 0 {
+                    // Loopback: MCR outputs reflect to MSR inputs
+                    let mcr = s.mcr;
+                    let mut msr: u8 = 0;
+                    if mcr & 0x01 != 0 { msr |= 0x20; } // DTR → DSR
+                    if mcr & 0x02 != 0 { msr |= 0x10; } // RTS → CTS
+                    if mcr & 0x04 != 0 { msr |= 0x40; } // OUT1 → RI
+                    if mcr & 0x08 != 0 { msr |= 0x80; } // OUT2 → DCD
+                    msr
+                } else {
+                    MSR_DEFAULT
+                }
+            }
+            REG_SCR => self.state.borrow().scr,
             _ => 0,
         };
+        if std::env::var("RVSIM_UART_TRACE").is_ok() && reg != REG_LSR {
+            let dlab = self.state.borrow().lcr & LCR_DLAB != 0;
+            let reg_name = match reg {
+                REG_THR_RBR if dlab => "DLL",
+                REG_THR_RBR => "RBR",
+                REG_IER if dlab => "DLM",
+                REG_IER => "IER",
+                REG_IIR_FCR => "IIR",
+                REG_LCR => "LCR", REG_MCR => "MCR", REG_MSR => "MSR",
+                REG_SCR => "SCR", _ => "???",
+            };
+            eprintln!("[UART] read  {} = 0x{:02x}", reg_name, val);
+        }
         Ok(val)
     }
 
     pub fn write8(&self, offset: u32, val: u8) -> Result<(), Trap> {
-        let mut s = self.state.borrow_mut();
-        match offset & 0x7 {
-            REG_THR_RBR => {
-                // Best-effort write; ignore I/O errors so a closed stdout
-                // doesn't break the simulator.
-                let _ = s.sink.write_all(&[val]);
-                let _ = s.sink.flush();
+        let reg = offset & 0x7;
+        if std::env::var("RVSIM_UART_TRACE").is_ok() {
+            let dlab = self.state.borrow().lcr & LCR_DLAB != 0;
+            let reg_name = match reg {
+                REG_THR_RBR if dlab => "DLL",
+                REG_THR_RBR => "THR",
+                REG_IER if dlab => "DLM",
+                REG_IER => "IER",
+                REG_IIR_FCR => "FCR",
+                REG_LCR => "LCR",
+                REG_MCR => "MCR",
+                _ => "???",
+            };
+            if reg == REG_THR_RBR && !dlab {
+                if val >= 0x20 && val < 0x7f {
+                    eprintln!("[UART] write THR = '{}'", val as char);
+                } else {
+                    eprintln!("[UART] write THR = 0x{:02x}", val);
+                }
+            } else {
+                eprintln!("[UART] write {} = 0x{:02x}", reg_name, val);
             }
-            REG_IER => s.ier = val,
-            REG_IIR_FCR => { /* FCR write: ignore */ }
+        }
+        let mut s = self.state.borrow_mut();
+        match reg {
+            REG_THR_RBR => {
+                if s.lcr & LCR_DLAB != 0 {
+                    s.dll = val;
+                } else {
+                    let _ = s.sink.write_all(&[val]);
+                    let _ = s.sink.flush();
+                    s.thre_ip = true;
+                }
+            }
+            REG_IER => {
+                if s.lcr & LCR_DLAB != 0 {
+                    s.dlm = val;
+                } else {
+                    let old = s.ier;
+                    s.ier = val;
+                    if val & IER_THRE != 0 && old & IER_THRE == 0 {
+                        s.thre_ip = true;
+                    }
+                }
+            }
+            REG_IIR_FCR => {
+                s.fcr = val & 0x01;
+            }
             REG_LCR => s.lcr = val,
             REG_MCR => s.mcr = val,
             REG_LSR | REG_MSR => { /* read-only */ }
@@ -157,9 +257,37 @@ mod tests {
     fn ier_and_lcr_round_trip() {
         let (uart, _) = uart_with_sink();
         uart.write8(REG_IER, 0xAB).unwrap();
-        uart.write8(REG_LCR, 0x83).unwrap();
+        uart.write8(REG_LCR, 0x03).unwrap(); // DLAB clear
         assert_eq!(uart.read8(REG_IER).unwrap(), 0xAB);
-        assert_eq!(uart.read8(REG_LCR).unwrap(), 0x83);
+        assert_eq!(uart.read8(REG_LCR).unwrap(), 0x03);
+    }
+
+    #[test]
+    fn dlab_muxes_dll_dlm() {
+        let (uart, buf) = uart_with_sink();
+        // Set DLAB
+        uart.write8(REG_LCR, LCR_DLAB).unwrap();
+        // Write divisor latch registers
+        uart.write8(REG_THR_RBR, 0x18).unwrap(); // DLL
+        uart.write8(REG_IER, 0x00).unwrap();      // DLM
+        // Read them back
+        assert_eq!(uart.read8(REG_THR_RBR).unwrap(), 0x18); // DLL
+        assert_eq!(uart.read8(REG_IER).unwrap(), 0x00);      // DLM
+        // Nothing should have been sent to the sink
+        assert!(buf.lock().unwrap().is_empty());
+        // Clear DLAB — IER should still be 0 (not corrupted by DLM write)
+        uart.write8(REG_LCR, 0x03).unwrap();
+        assert_eq!(uart.read8(REG_IER).unwrap(), 0x00);
+    }
+
+    #[test]
+    fn loopback_msr_reflects_mcr() {
+        let (uart, _) = uart_with_sink();
+        // Set MCR to loopback + OUT2 + RTS (what Linux autoconfig does: 0x1A)
+        uart.write8(REG_MCR, MCR_LOOP | 0x0A).unwrap();
+        let msr = uart.read8(REG_MSR).unwrap();
+        // RTS(bit1) → CTS(0x10), OUT2(bit3) → DCD(0x80) = 0x90
+        assert_eq!(msr & 0xF0, 0x90);
     }
 
     #[test]

@@ -75,7 +75,7 @@ impl Clint {
             OFF_MTIMECMP_HI => Ok((s.mtimecmp >> 32) as u32),
             OFF_MTIME_LO => Ok(s.mtime as u32),
             OFF_MTIME_HI => Ok((s.mtime >> 32) as u32),
-            _ => Err(Trap::LoadAccessFault),
+            _ => Ok(0),
         }
     }
 
@@ -102,7 +102,7 @@ impl Clint {
                 s.mtime = (s.mtime & 0x0000_0000_FFFF_FFFF) | ((val as u64) << 32);
                 Ok(())
             }
-            _ => Err(Trap::StoreAccessFault),
+            _ => Ok(()),
         }
     }
 

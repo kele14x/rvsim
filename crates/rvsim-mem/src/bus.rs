@@ -44,6 +44,11 @@ impl Bus {
     /// Per-cycle tick — advance device counters. Called once per `Hart::step`.
     pub fn tick(&mut self, cycle: u64) {
         self.clint.tick(cycle);
+        if self.uart.interrupt_pending() {
+            self.plic.set_pending(10);
+        } else {
+            self.plic.clear_pending(10);
+        }
     }
 
     /// Returns the set of `mip` bits the bus is currently driving from hardware.

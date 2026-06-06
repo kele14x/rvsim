@@ -79,7 +79,7 @@ impl Plic {
 
     fn is_interrupted(&self, ctx: usize) -> bool {
         let s = self.state.borrow();
-        let candidates = s.pending & s.enable[ctx] & !1; // mask out source 0
+        let candidates = s.pending & s.enable[ctx] & !s.claimed[ctx] & !1;
         if candidates == 0 {
             return false;
         }
@@ -93,7 +93,7 @@ impl Plic {
 
     fn claim(&self, ctx: usize) -> u32 {
         let mut s = self.state.borrow_mut();
-        let candidates = s.pending & s.enable[ctx] & !1;
+        let candidates = s.pending & s.enable[ctx] & !s.claimed[ctx] & !1;
         if candidates == 0 {
             return 0;
         }
@@ -334,5 +334,26 @@ mod tests {
         assert_eq!(plic.read32(0x1000).unwrap() & 0x02, 0x02);
         plic.write32(0x1000, 0).unwrap(); // should be ignored
         assert_eq!(plic.read32(0x1000).unwrap() & 0x02, 0x02);
+    }
+
+    #[test]
+    fn claimed_source_not_reclaimable() {
+        let plic = Plic::new();
+        plic.write32(0x04, 1).unwrap(); // source 1 priority = 1
+        plic.write32(0x2000, 0x02).unwrap(); // enable source 1 for ctx 0
+        plic.set_pending(1);
+
+        let claimed = plic.read32(0x20_0004).unwrap(); // claim
+        assert_eq!(claimed, 1);
+
+        // Re-pend while still claimed — must not be re-claimable
+        plic.set_pending(1);
+        assert!(!plic.meip_pending()); // EIP must not assert
+        assert_eq!(plic.read32(0x20_0004).unwrap(), 0); // claim returns 0
+
+        // After complete, re-pended source becomes claimable again
+        plic.write32(0x20_0004, 1).unwrap(); // complete
+        assert!(plic.meip_pending());
+        assert_eq!(plic.read32(0x20_0004).unwrap(), 1);
     }
 }
