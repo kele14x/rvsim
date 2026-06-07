@@ -2,7 +2,47 @@
 
 A RISC-V simulator (RV32GC + Sv32 MMU) in Rust that boots Linux.
 
-## Quick Start
+## Run ISA Tests
+
+### Install the necessary RISC-V toolchain
+
+Install the RISC-V cross-compiler toolchain.
+
+On linux the easiest way is download the release binary from <https://github.com/riscv-collab/riscv-gnu-toolchain>. Ensure you downloaded the following 4 files:
+
+- riscv32-elf-ubuntu-24.04-gcc.tar.xz
+- riscv32-glibc-ubuntu-24.04-gcc.tar.xz
+- riscv64-elf-ubuntu-24.04-gcc.tar.xz
+- riscv64-glibc-ubuntu-24.04-gcc.tar.xz
+
+Many distros ship a `riscv64-linux-gnu-` toolchain, but more or less with some issue.
+
+Unzip them to a proper folder (for example `/opt/riscv`):
+
+``` bash
+tar xvf riscv32-elf-ubuntu-24.04-gcc.tar.xz -C /opt
+tar xvf riscv32-glibc-ubuntu-24.04-gcc.tar.xz -C /opt
+tar xvf riscv64-elf-ubuntu-24.04-gcc.tar.xz -C /opt
+tar xvf riscv64-glibc-ubuntu-24.04-gcc.tar.xz -C /opt
+```
+
+Setup your path:
+
+``` bash
+export PATH="/opt/riscv/bin:$PATH"
+```
+
+### Build riscv-tests
+
+Checkout the **riscv-tests** repo.
+
+``` bash
+git submodule update --init --recursive --depth 1 tests/riscv-tests
+```
+
+
+
+## Run individual tests
 
 ```bash
 cargo build
@@ -49,102 +89,45 @@ simulation length (default 10 billion with `--kernel`).
 
 ### Prerequisites
 
-Install a RISC-V 32-bit cross-compiler toolchain. The exact package name
-depends on your distro:
-
-```bash
-# Debian / Ubuntu
-sudo apt install gcc-riscv64-linux-gnu
-
-# Fedora
-sudo dnf install gcc-riscv64-linux-gnu
-
-# macOS (Homebrew) — use the riscv64 toolchain; it supports rv32 via -march
-brew install riscv64-elf-gcc
-
-# Or build from source: https://github.com/riscv-collab/riscv-gnu-toolchain
-# Configure with: ./configure --prefix=/opt/riscv --with-arch=rv32gc --with-abi=ilp32d
-```
-
-> **Note:** Most distros only ship a `riscv64-linux-gnu-` toolchain. That
-> toolchain works fine for building an RV32 kernel — set `ARCH=riscv` and
-> the kernel's Kconfig/Makefile handles the 32-bit configuration.
-
 You also need `dtc` (device-tree compiler) and standard build tools:
 
 ```bash
 # Debian / Ubuntu
 sudo apt install device-tree-compiler flex bison bc libssl-dev
-
-# macOS
-brew install dtc
 ```
 
-### Clone and configure
+### Get and configure Kernel
 
-```bash
-git clone --depth 1 https://github.com/torvalds/linux.git
-cd linux
-```
+Download a tarball from [The Linux Kernel Archives](https://www.kernel.org/). For example **linux-6.12.92.tar.xz**.
 
 Start from the default RISC-V 32-bit defconfig, then apply the options
 rvsim needs. A minimal `.config` can be produced with:
 
 ```bash
-make ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- rv32_defconfig
+make ARCH=riscv CROSS_COMPILE=riscv64-unknown-linux-gnu- rv32_defconfig
 ```
 
-Then tweak the config — open `.config` in an editor or use `menuconfig`:
+Optional:
+
+Tweak the config — open `.config` in an editor or use `menuconfig`:
 
 ```bash
-make ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- menuconfig
-```
-
-The essential settings for rvsim:
-
-```
-# Already set by rv32_defconfig:
-CONFIG_ARCH_RV32I=y
-CONFIG_32BIT=y
-CONFIG_MMU=y
-CONFIG_SERIAL_8250=y
-CONFIG_SERIAL_8250_CONSOLE=y
-CONFIG_SERIAL_OF_PLATFORM=y
-CONFIG_TTY=y
-
-# Make sure these are enabled:
-CONFIG_RISCV_SBI=y              # SBI support (OpenSBI interface)
-CONFIG_RISCV_SBI_V01=y          # SBI v0.1 legacy extensions
-CONFIG_BLK_DEV_INITRD=y         # initramfs support
-
-# Disable things rvsim doesn't have (speeds up boot):
-# CONFIG_SMP is not set          # single hart
-# CONFIG_NET is not set           # no NIC
-# CONFIG_SOUND is not set         # no soundcard
-# CONFIG_USB_SUPPORT is not set
-# CONFIG_WLAN is not set
-# CONFIG_WIRELESS is not set
+make ARCH=riscv CROSS_COMPILE=riscv64-unknown-linux-gnu- menuconfig
 ```
 
 ### Build
 
 ```bash
-make ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- -j$(nproc)
+make ARCH=riscv CROSS_COMPILE=riscv64-unknown-linux-gnu- -j$(nproc)
 ```
 
 The kernel Image will be at:
 
-```
+```plaintext
 arch/riscv/boot/Image
 ```
 
-Copy it into the repo:
-
-```bash
-cp arch/riscv/boot/Image /path/to/rvsim/tests/opensbi-bin/Image
-```
-
----
+We does not ship a initramfs with it currently. But it's ok for now.
 
 ## Building the initramfs
 
@@ -170,14 +153,14 @@ int main(void) {
 Cross-compile it **statically** for RV32:
 
 ```bash
-riscv64-linux-gnu-gcc -march=rv32gc -mabi=ilp32d -static -o init init.c
+riscv32-unknown-linux-gnu-gcc -march=rv32gc -mabi=ilp32d -static -o init init.c
 ```
 
 Verify it is a static RV32 binary:
 
 ```bash
 file init
-# Expected: ELF 32-bit LSB executable, UCB RISC-V, ... statically linked
+# Expected: ELF 32-bit LSB executable, UCB RISC-V, ... statically linked ...
 ```
 
 ### 2. Create the cpio archive
@@ -225,7 +208,15 @@ CONFIG_INITRAMFS_SOURCE="/absolute/path/to/initramfs.cpio"
 
 Then rebuild the kernel — the Image will contain the initramfs.
 
----
+```bash
+make ARCH=riscv CROSS_COMPILE=riscv64-unknown-linux-gnu- -j$(nproc)
+```
+
+Copy it into the repo:
+
+```bash
+cp arch/riscv/boot/Image /path/to/rvsim/tests/opensbi-bin/Image
+```
 
 ## Building OpenSBI
 
@@ -236,7 +227,7 @@ need to rebuild it:
 git clone --depth 1 https://github.com/riscv-software-src/opensbi.git
 cd opensbi
 
-make CROSS_COMPILE=riscv64-linux-gnu- \
+make CROSS_COMPILE=riscv64-unknown-linux-gnu- \
      PLATFORM=generic \
      PLATFORM_RISCV_XLEN=32 \
      PLATFORM_RISCV_ISA=rv32gc \

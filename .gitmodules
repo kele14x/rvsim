@@ -1,0 +1,11 @@
+[submodule "tests/riscv-tests"]
+	path = tests/riscv-tests
+	url = git@github.com:riscv-software-src/riscv-tests.git
+[submodule "tests/linux"]
+	path = tests/linux
+	url = git@github.com:gregkh/linux.git
+	branch = linux-6.12.y
+[submodule "tests/opensbi"]
+	path = tests/opensbi
+	url = git@github.com:riscv-software-src/opensbi.git
+	branch = release-1.8.x
