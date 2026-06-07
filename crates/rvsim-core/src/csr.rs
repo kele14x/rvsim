@@ -77,6 +77,12 @@ pub const CSR_SCAUSE: u16 = 0x142;
 pub const CSR_STVAL: u16 = 0x143;
 pub const CSR_SIP: u16 = 0x144;
 
+// Trigger module CSRs (debug) — RAZ/WI stubs (no triggers implemented).
+pub const CSR_TSELECT: u16 = 0x7A0;
+pub const CSR_TDATA1: u16 = 0x7A1;
+pub const CSR_TDATA2: u16 = 0x7A2;
+pub const CSR_TCONTROL: u16 = 0x7A5;
+
 // mstatus field bit positions
 pub const MSTATUS_SIE_BIT: u32 = 1;
 pub const MSTATUS_MIE_BIT: u32 = 3;
@@ -220,6 +226,11 @@ impl CsrFile {
         regs.insert(CSR_STVAL, 0);
         regs.insert(CSR_SIE, 0);
         regs.insert(CSR_SIP, 0);
+        // Trigger module CSRs — RAZ/WI (no hardware triggers implemented).
+        regs.insert(CSR_TSELECT, 0);
+        regs.insert(CSR_TDATA1, 0);
+        regs.insert(CSR_TDATA2, 0);
+        regs.insert(CSR_TCONTROL, 0);
         Self { regs }
     }
 
@@ -297,6 +308,8 @@ impl CsrFile {
             // sie / sip are masked views of mie / mip
             CSR_SIE => Ok(self.regs.get(&CSR_MIE).copied().unwrap_or(0) & SIE_SIP_MASK),
             CSR_SIP => Ok(self.regs.get(&CSR_MIP).copied().unwrap_or(0) & SIE_SIP_MASK),
+            // Trigger module: no triggers implemented — read as zero.
+            CSR_TSELECT | CSR_TDATA1 | CSR_TDATA2 | CSR_TCONTROL => Ok(0),
             _ => self.regs.get(&addr).copied().ok_or(Trap::IllegalInstruction),
         }
     }
@@ -346,6 +359,8 @@ impl CsrFile {
                 *e = (*e & !MIP_SSIP) | (val & MIP_SSIP);
                 Ok(())
             }
+            // Trigger module: no triggers implemented — writes silently ignored.
+            CSR_TSELECT | CSR_TDATA1 | CSR_TDATA2 | CSR_TCONTROL => Ok(()),
             // mip: only SSIP/MSIP/STIP are software-writable. MTIP/MEIP/SEIP are HW-driven.
             CSR_MIP => {
                 let e = self.regs.entry(CSR_MIP).or_insert(0);

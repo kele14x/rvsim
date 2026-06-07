@@ -7,9 +7,10 @@ CARGO_FLAGS  ?=
 RISCV_TESTS_DIR    := tests/riscv-tests-bin
 # Suite prefixes to run under `riscv-tests`. Override on the command line, e.g.
 #   make riscv-tests RISCV_TEST_SUITES='rv32ui-p rv32uc-p'
-RISCV_TEST_SUITES  ?= rv32ui-p rv32um-p rv32ua-p rv32uc-p rv32uf-p rv32ud-p rv32mi-p rv32si-p
+RISCV_TEST_SUITES  ?= rv32ui-p rv32um-p rv32ua-p rv32uc-p rv32uf-p rv32ud-p rv32mi-p rv32si-p \
+                       rv32ui-v rv32um-v rv32ua-v rv32uc-v rv32uf-v rv32ud-v
 OPENSBI_ELF        := tests/opensbi-bin/fw_jump.elf
-OPENSBI_DTB        := tests/opensbi-bin/rvsim.dtb
+OPENSBI_DTB        := tests/device-tree-bin/rvsim.dtb
 
 .PHONY: help build test clippy fmt check riscv-tests opensbi clean
 

@@ -157,7 +157,7 @@ impl Uart {
                 _ => "???",
             };
             if reg == REG_THR_RBR && !dlab {
-                if val >= 0x20 && val < 0x7f {
+                if (0x20..0x7f).contains(&val) {
                     eprintln!("[UART] write THR = '{}'", val as char);
                 } else {
                     eprintln!("[UART] write THR = 0x{:02x}", val);

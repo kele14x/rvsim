@@ -1,21 +1,23 @@
-# rvsim
+# RVSIM
 
-A RISC-V simulator (RV32GC + Sv32 MMU) in Rust that boots Linux.
+A **R**ISC-**V** **sim**ulator (RV32GC + Sv32 MMU) in Rust that boots Linux.
 
 ## Run ISA Tests
 
-### Install the necessary RISC-V toolchain
+### Prerequisite
 
 Install the RISC-V cross-compiler toolchain.
 
-On linux the easiest way is download the release binary from <https://github.com/riscv-collab/riscv-gnu-toolchain>. Ensure you downloaded the following 4 files:
+#### Linux
+
+On Linux the easiest way is to download the release binaries from <https://github.com/riscv-collab/riscv-gnu-toolchain>. Ensure you download the following 4 files:
 
 - riscv32-elf-ubuntu-24.04-gcc.tar.xz
 - riscv32-glibc-ubuntu-24.04-gcc.tar.xz
 - riscv64-elf-ubuntu-24.04-gcc.tar.xz
 - riscv64-glibc-ubuntu-24.04-gcc.tar.xz
 
-Many distros ship a `riscv64-linux-gnu-` toolchain, but more or less with some issue.
+Many distros ship a `riscv64-linux-gnu-` toolchain, but they often have issues.
 
 Unzip them to a proper folder (for example `/opt/riscv`):
 
@@ -26,74 +28,117 @@ tar xvf riscv64-elf-ubuntu-24.04-gcc.tar.xz -C /opt
 tar xvf riscv64-glibc-ubuntu-24.04-gcc.tar.xz -C /opt
 ```
 
-Setup your path:
+Setup your environment variables:
 
 ``` bash
 export PATH="/opt/riscv/bin:$PATH"
+export RISCV="/opt/riscv"
 ```
+
+You can add the above two lines to your `~/.bashrc` or `~/.zshrc`.
+
+#### MacOS
+
+On MacOS, there is a [brew package](https://github.com/riscv-software-src/homebrew-riscv) that ships the toolchain. However this toolchain was not able to compile OpenSBI. And I did not manage to compile it from source. Suggest you use a VM to run the Linux toolchain.
+
+#### Windows
+
+On Windows the easiest way is to use WSL and follow the Linux instructions.
 
 ### Build riscv-tests
 
-Checkout the **riscv-tests** repo.
+Check out the **riscv-tests** repo:
 
 ``` bash
 git submodule update --init --recursive --depth 1 tests/riscv-tests
+cd tests/riscv-tests
 ```
 
+Build it:
 
+``` bash
+autoconf
+./configure --with-xlen=32 --prefix=$RISCV/target
+make
+```
 
-## Run individual tests
+Then copy the RISC-V ISA test binaries to folder **riscv-tests-bin**.
 
-```bash
+``` bash
+cp isa/rv32ui-* /path/to/rvsim/tests/riscv-tests-bin
+cp isa/rv32um-* /path/to/rvsim/tests/riscv-tests-bin
+cp isa/rv32ua-* /path/to/rvsim/tests/riscv-tests-bin
+cp isa/rv32uc-* /path/to/rvsim/tests/riscv-tests-bin
+cp isa/rv32uf-* /path/to/rvsim/tests/riscv-tests-bin
+cp isa/rv32ud-* /path/to/rvsim/tests/riscv-tests-bin
+cp isa/rv32mi-* /path/to/rvsim/tests/riscv-tests-bin
+cp isa/rv32si-* /path/to/rvsim/tests/riscv-tests-bin
+```
+
+### Run tests
+
+From the project root, run:
+
+``` bash
 cargo build
 cargo test
-cargo run -- tests/rvsim-tests-bin/rv32ui-p-add    # run a single riscv-test
+cargo run -- tests/riscv-tests-bin/rv32ui-p-add    # run a single riscv-test
+make riscv-tests   # run all riscv-tests
 ```
-
-## Booting Linux
-
-rvsim boots Linux via OpenSBI (fw_jump) → Linux kernel → userspace init.
-You need three binaries plus a device-tree blob:
-
-| Component | File | How to get |
-|-----------|------|------------|
-| OpenSBI firmware | `tests/opensbi-bin/fw_jump.elf` | Checked into repo |
-| Device tree blob | `tests/opensbi-bin/rvsim.dtb` | Checked into repo (compiled from `rvsim.dts`) |
-| Linux kernel Image | `tests/opensbi-bin/Image` | Build from source (see below) |
-| initramfs (cpio) | your `initramfs.cpio` | Build from source (see below) |
-
-### Run
-
-```bash
-cargo run -- \
-  tests/opensbi-bin/fw_jump.elf \
-  --dtb tests/opensbi-bin/rvsim.dtb \
-  --kernel tests/opensbi-bin/Image \
-  --max-cycles 2000000000
-```
-
-Kernel output appears on stdout. Use `--max-cycles` to control the
-simulation length (default 10 billion with `--kernel`).
-
-### Debug environment variables
-
-| Variable | Effect |
-|----------|--------|
-| `RVSIM_TRACE=1` | Print PC, privilege mode, and key CSRs every cycle (very verbose) |
-| `RVSIM_UART_TRACE=1` | Log every UART register read/write |
-| `RVSIM_SBI_LOG=1` | Log SBI ecalls from S-mode to M-mode |
 
 ---
+
+## Building OpenSBI
+
+Checkout the **opensbi** repo:
+
+``` bash
+git clone --depth 1 https://github.com/riscv-software-src/opensbi.git
+cd opensbi
+```
+
+Build it:
+
+``` bash
+make CROSS_COMPILE=riscv64-unknown-linux-gnu- \
+     PLATFORM=generic \
+     PLATFORM_RISCV_XLEN=32 \
+     PLATFORM_RISCV_ISA=rv32gc \
+     FW_JUMP_ADDR=0x80400000 \
+     FW_JUMP_FDT_ADDR=0x82200000 \
+     -j$(nproc)
+```
+
+Copy the binary to **opensbi-bin** folder:
+
+``` bash
+cp build/platform/generic/firmware/fw_jump.elf /path/to/rvsim/tests/opensbi-bin/
+```
+
+## Compiling the Device Tree
+
+You also need `dtc` (device-tree compiler):
+
+```bash
+# Debian / Ubuntu
+sudo apt install dtc
+```
+
+The DTB is compiled from `tests/device-tree-bin/rvsim.dts`:
+
+```bash
+dtc -I dts -O dtb -o tests/device-tree-bin/rvsim.dtb tests/device-tree-bin/rvsim.dts
+```
 
 ## Building the Linux Kernel
 
 ### Prerequisites
 
-You also need `dtc` (device-tree compiler) and standard build tools:
+You also need some standard build tools:
 
 ```bash
 # Debian / Ubuntu
-sudo apt install device-tree-compiler flex bison bc libssl-dev
+sudo apt install flex bison bc libssl-dev
 ```
 
 ### Get and configure Kernel
@@ -127,7 +172,7 @@ The kernel Image will be at:
 arch/riscv/boot/Image
 ```
 
-We does not ship a initramfs with it currently. But it's ok for now.
+We do not ship an initramfs with it currently. But it's ok for now.
 
 ## Building the initramfs
 
@@ -215,33 +260,38 @@ make ARCH=riscv CROSS_COMPILE=riscv64-unknown-linux-gnu- -j$(nproc)
 Copy it into the repo:
 
 ```bash
-cp arch/riscv/boot/Image /path/to/rvsim/tests/opensbi-bin/Image
+cp arch/riscv/boot/Image /path/to/rvsim/tests/linux-bin/Image
 ```
 
-## Building OpenSBI
+## Booting Linux
 
-A pre-built `fw_jump.elf` is checked into `tests/opensbi-bin/`. If you
-need to rebuild it:
+rvsim boots Linux via OpenSBI (fw_jump) → Linux kernel → userspace init.
+You need three binaries plus a device-tree blob:
+
+| Component          | File                                 | How to get                                    |
+|--------------------|--------------------------------------|-----------------------------------------------|
+| OpenSBI firmware   | `tests/opensbi-bin/fw_jump.elf`      | Build from source (see above)                 |
+| Device tree blob   | `tests/device-tree-bin/rvsim.dtb`    | Compiled from `rvsim.dts` (see above)         |
+| Linux kernel Image | `tests/linux-bin/Image`              | Build from source (see above)                 |
+| initramfs (cpio)   | `tests/initramfs-bin/initramfs.cpio` | Build from source (see below)                 |
+
+### Run
 
 ```bash
-git clone --depth 1 https://github.com/riscv-software-src/opensbi.git
-cd opensbi
-
-make CROSS_COMPILE=riscv64-unknown-linux-gnu- \
-     PLATFORM=generic \
-     PLATFORM_RISCV_XLEN=32 \
-     PLATFORM_RISCV_ISA=rv32gc \
-     FW_JUMP_ADDR=0x80400000 \
-     FW_JUMP_FDT_ADDR=0x82200000 \
-     -j$(nproc)
-
-cp build/platform/generic/firmware/fw_jump.elf /path/to/rvsim/tests/opensbi-bin/
+cargo run -- \
+  tests/opensbi-bin/fw_jump.elf \
+  --dtb tests/device-tree-bin/rvsim.dtb \
+  --kernel tests/linux-bin/Image \
+  --max-cycles 1000000000
 ```
 
-## Recompiling the Device Tree
+Kernel output appears on stdout. Use `--max-cycles` to control the
+simulation length (default 10 billion with `--kernel`).
 
-The DTB is compiled from `tests/opensbi-bin/rvsim.dts`:
+### Debug environment variables
 
-```bash
-dtc -I dts -O dtb -o tests/opensbi-bin/rvsim.dtb tests/opensbi-bin/rvsim.dts
-```
+| Variable             | Effect                                                            |
+|----------------------|-------------------------------------------------------------------|
+| `RVSIM_TRACE=1`      | Print PC, privilege mode, and key CSRs every cycle (very verbose) |
+| `RVSIM_UART_TRACE=1` | Log every UART register read/write                                |
+| `RVSIM_SBI_LOG=1`    | Log SBI ecalls from S-mode to M-mode                              |
