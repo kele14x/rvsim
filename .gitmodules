@@ -9,3 +9,7 @@
 	path = tests/opensbi
 	url = git@github.com:riscv-software-src/opensbi.git
 	branch = release-1.8.x
+[submodule "tests/busybox"]
+	path = tests/busybox
+	url = https://github.com/vda-linux/busybox_mirror.git
+	branch = 1_37_stable

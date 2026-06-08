@@ -11,8 +11,9 @@ RISCV_TEST_SUITES  ?= rv32ui-p rv32um-p rv32ua-p rv32uc-p rv32uf-p rv32ud-p rv32
                        rv32ui-v rv32um-v rv32ua-v rv32uc-v rv32uf-v rv32ud-v
 OPENSBI_ELF        := tests/opensbi-bin/fw_jump.elf
 OPENSBI_DTB        := tests/device-tree-bin/rvsim.dtb
+LINUX_IMAGE        := tests/linux-bin/Image
 
-.PHONY: help build test clippy fmt check riscv-tests opensbi clean
+.PHONY: help build test clippy fmt check riscv-tests opensbi linux clean
 
 help:
 	@echo "Targets:"
@@ -23,6 +24,7 @@ help:
 	@echo "  check         build + test + clippy"
 	@echo "  riscv-tests   Run the full riscv-tests suite; print failures + summary"
 	@echo "  opensbi       Boot OpenSBI fw_jump.elf with the bundled DTB (release)"
+	@echo "  linux         Boot Linux (OpenSBI + kernel + DTB, release)"
 	@echo "  clean         cargo clean"
 
 build:
@@ -64,6 +66,12 @@ riscv-tests:
 
 opensbi:
 	$(CARGO) run --release $(CARGO_FLAGS) -- --dtb $(OPENSBI_DTB) $(OPENSBI_ELF)
+
+linux:
+	$(CARGO) run --release $(CARGO_FLAGS) -- \
+		$(OPENSBI_ELF) \
+		--dtb $(OPENSBI_DTB) \
+		--kernel $(LINUX_IMAGE)
 
 clean:
 	$(CARGO) clean

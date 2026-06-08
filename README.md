@@ -88,13 +88,28 @@ make riscv-tests   # run all riscv-tests
 
 ---
 
+## Compiling the Device Tree
+
+You also need `dtc` (device-tree compiler):
+
+```bash
+# Debian / Ubuntu
+sudo apt install device-tree-compiler
+```
+
+The DTB is compiled from `tests/device-tree/rvsim.dts`:
+
+```bash
+dtc -I dts -O dtb -o tests/device-tree-bin/rvsim.dtb tests/device-tree/rvsim.dts
+```
+
 ## Building OpenSBI
 
-Checkout the **opensbi** repo:
+Check out the **opensbi** submodule:
 
 ``` bash
-git clone --depth 1 https://github.com/riscv-software-src/opensbi.git
-cd opensbi
+git submodule update --init --depth 1 tests/opensbi
+cd tests/opensbi
 ```
 
 Build it:
@@ -115,21 +130,6 @@ Copy the binary to **opensbi-bin** folder:
 cp build/platform/generic/firmware/fw_jump.elf /path/to/rvsim/tests/opensbi-bin/
 ```
 
-## Compiling the Device Tree
-
-You also need `dtc` (device-tree compiler):
-
-```bash
-# Debian / Ubuntu
-sudo apt install dtc
-```
-
-The DTB is compiled from `tests/device-tree-bin/rvsim.dts`:
-
-```bash
-dtc -I dts -O dtb -o tests/device-tree-bin/rvsim.dtb tests/device-tree-bin/rvsim.dts
-```
-
 ## Building the Linux Kernel
 
 ### Prerequisites
@@ -141,9 +141,22 @@ You also need some standard build tools:
 sudo apt install flex bison bc libssl-dev
 ```
 
-### Get and configure Kernel
+### Get the Kernel source
 
-Download a tarball from [The Linux Kernel Archives](https://www.kernel.org/). For example **linux-6.12.92.tar.xz**.
+The project includes a git submodule pointing to the **linux-6.12.y**
+stable branch:
+
+```bash
+git submodule update --init --depth 1 tests/linux
+cd tests/linux
+```
+
+> **Tip:** The Linux kernel repo is large — even a shallow clone can be
+> slow on a poor connection. As an alternative you can download a tarball
+> from [The Linux Kernel Archives](https://www.kernel.org/) (e.g.
+> **linux-6.12.92.tar.xz**) and extract it into `tests/linux/`.
+
+### Configure the Kernel
 
 Start from the default RISC-V 32-bit defconfig, then apply the options
 rvsim needs. A minimal `.config` can be produced with:
@@ -172,95 +185,94 @@ The kernel Image will be at:
 arch/riscv/boot/Image
 ```
 
-We do not ship an initramfs with it currently. But it's ok for now.
-
 ## Building the initramfs
 
-The kernel needs a root filesystem. The simplest approach is a cpio
-archive containing a statically linked `/init` program.
+The kernel needs a root filesystem. We provide two options: a minimal
+hello-world init (for quick smoke tests) and a BusyBox-based initramfs
+(for an interactive shell with real utilities).
 
-### 1. Write a minimal init program
+### Option A: Minimal init (hello world)
 
-```c
-// init.c
-#include <stdio.h>
-#include <unistd.h>
-
-int main(void) {
-    printf("Hello from Linux on rvsim!\n");
-    // Keep init alive — the kernel panics if init exits.
-    for (;;)
-        sleep(1);
-    return 0;
-}
-```
-
-Cross-compile it **statically** for RV32:
+`tests/initramfs/init.c` is a tiny C program that prints a message and
+sleeps forever. Useful for testing that Linux boots to userspace.
 
 ```bash
+cd tests/initramfs
 riscv32-unknown-linux-gnu-gcc -march=rv32gc -mabi=ilp32d -static -o init init.c
 ```
 
-Verify it is a static RV32 binary:
+Create a cpio archive using the kernel's `gen_init_cpio` and the
+manifest file `tests/initramfs/minimal_list.txt`:
 
 ```bash
-file init
-# Expected: ELF 32-bit LSB executable, UCB RISC-V, ... statically linked ...
+# Build gen_init_cpio (one-time):
+cd tests/linux && make usr/gen_init_cpio && cd -
+
+cd tests/initramfs
+../../tests/linux/usr/gen_init_cpio minimal_list.txt > ../initramfs-bin/initramfs.cpio
 ```
 
-### 2. Create the cpio archive
+### Option B: BusyBox initramfs (interactive shell)
 
-The archive must include `/dev/console` as a character device node
-(major 5, minor 1). There are two methods:
+This gives you a real shell (`/bin/sh`) and standard utilities (`ls`,
+`cat`, `grep`, `vi`, `ps`, `dmesg`, etc.) after boot.
 
-#### Method A: using the kernel's gen_init_cpio (no root required)
+#### Automated build
+
+Run the build script on a Linux machine with the RV32 toolchain:
 
 ```bash
-cat > initramfs_list.txt << 'EOF'
-dir  /dev        0755 0 0
-nod  /dev/console 0600 0 0 c 5 1
-file /init       init 0755 0 0
-EOF
-
-# Build gen_init_cpio from the kernel source tree (one-time):
-cd /path/to/linux
-make usr/gen_init_cpio
-
-# Generate the archive:
-usr/gen_init_cpio /path/to/initramfs_list.txt > /path/to/initramfs.cpio
+git submodule update --init tests/busybox
+cd tests/initramfs
+./build.sh
 ```
 
-#### Method B: using cpio directly (requires root for mknod)
+This builds BusyBox from the `tests/busybox` submodule (1.37, statically
+linked for RV32GC) and produces `tests/initramfs-bin/initramfs.cpio`.
+You can override the compiler:
 
 ```bash
-mkdir -p /tmp/initramfs/dev
-sudo mknod /tmp/initramfs/dev/console c 5 1
-cp init /tmp/initramfs/init
-chmod +x /tmp/initramfs/init
-
-cd /tmp/initramfs
-find . | cpio -o -H newc > /path/to/initramfs.cpio
+CROSS_COMPILE=riscv32-unknown-linux-gnu- ./build.sh
 ```
 
-### 3. Embed in the kernel or load separately
-
-The simplest approach is to embed the initramfs into the kernel Image at
-build time. Add this to your kernel `.config` before building:
-
-```
-CONFIG_INITRAMFS_SOURCE="/absolute/path/to/initramfs.cpio"
-```
-
-Then rebuild the kernel — the Image will contain the initramfs.
+#### Manual build
 
 ```bash
+# 1. Build BusyBox from the submodule
+git submodule update --init tests/busybox
+cd tests/busybox
+
+make ARCH=riscv CROSS_COMPILE=riscv32-unknown-linux-gnu- defconfig
+sed -i \
+    -e 's/^# CONFIG_STATIC is not set$/CONFIG_STATIC=y/' \
+    -e 's/^CONFIG_SHA1_HWACCEL=y$/# CONFIG_SHA1_HWACCEL is not set/' \
+    -e 's/^CONFIG_SHA256_HWACCEL=y$/# CONFIG_SHA256_HWACCEL is not set/' \
+    -e 's/^CONFIG_TC=y$/# CONFIG_TC is not set/' \
+    .config
+yes "" | make ARCH=riscv CROSS_COMPILE=riscv32-unknown-linux-gnu- oldconfig
+make ARCH=riscv CROSS_COMPILE=riscv32-unknown-linux-gnu- -j$(nproc)
+
+# 2. Copy binary and build cpio
+cp busybox ../initramfs/busybox
+cd ../initramfs
+
+# Build gen_init_cpio if needed:
+cd ../linux && make usr/gen_init_cpio && cd -
+
+../linux/usr/gen_init_cpio initramfs_list.txt > ../initramfs-bin/initramfs.cpio
+```
+
+### Embed in the kernel
+
+Both options above produce `tests/initramfs-bin/initramfs.cpio`. Update
+the kernel `.config` to embed it and rebuild:
+
+```bash
+cd tests/linux
+./scripts/config --set-str CONFIG_INITRAMFS_SOURCE \
+    "$(realpath ../initramfs-bin/initramfs.cpio)"
 make ARCH=riscv CROSS_COMPILE=riscv64-unknown-linux-gnu- -j$(nproc)
-```
-
-Copy it into the repo:
-
-```bash
-cp arch/riscv/boot/Image /path/to/rvsim/tests/linux-bin/Image
+cp arch/riscv/boot/Image ../linux-bin/Image
 ```
 
 ## Booting Linux

@@ -15,3 +15,9 @@ tests/device-tree-bin/
 tests/initramfs-bin/
 tests/linux-bin/
 tests/riscv-tests-bin/
+
+# initramfs build artifacts
+tests/initramfs/_build/
+tests/initramfs/busybox
+tests/initramfs/init
+tests/opensbi-bin/

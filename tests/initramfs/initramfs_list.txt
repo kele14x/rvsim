@@ -1,0 +1,103 @@
+# initramfs manifest for gen_init_cpio
+# Usage: gen_init_cpio initramfs_list.txt > initramfs.cpio
+#
+# Run from tests/initramfs/ so relative paths to busybox and init.sh resolve.
+
+# Directories
+dir  /bin         0755 0 0
+dir  /sbin        0755 0 0
+dir  /usr         0755 0 0
+dir  /usr/bin     0755 0 0
+dir  /usr/sbin    0755 0 0
+dir  /dev         0755 0 0
+dir  /proc        0755 0 0
+dir  /sys         0755 0 0
+dir  /etc         0755 0 0
+dir  /tmp         1777 0 0
+dir  /root        0700 0 0
+
+# Device nodes (console is required for kernel output before devtmpfs)
+nod  /dev/console 0600 0 0 c 5 1
+nod  /dev/null    0666 0 0 c 1 3
+
+# BusyBox binary
+file /bin/busybox busybox 0755 0 0
+
+# Init script
+file /init        init.sh 0755 0 0
+
+# Core shell
+slink /bin/sh          /bin/busybox 0777 0 0
+slink /bin/ash         /bin/busybox 0777 0 0
+
+# File operations
+slink /bin/cat         /bin/busybox 0777 0 0
+slink /bin/cp          /bin/busybox 0777 0 0
+slink /bin/mv          /bin/busybox 0777 0 0
+slink /bin/rm          /bin/busybox 0777 0 0
+slink /bin/ls          /bin/busybox 0777 0 0
+slink /bin/ln          /bin/busybox 0777 0 0
+slink /bin/mkdir       /bin/busybox 0777 0 0
+slink /bin/rmdir       /bin/busybox 0777 0 0
+slink /bin/chmod       /bin/busybox 0777 0 0
+slink /bin/chown       /bin/busybox 0777 0 0
+slink /bin/touch       /bin/busybox 0777 0 0
+slink /bin/stat        /bin/busybox 0777 0 0
+slink /bin/dd          /bin/busybox 0777 0 0
+
+# Text processing
+slink /bin/echo        /bin/busybox 0777 0 0
+slink /bin/head        /bin/busybox 0777 0 0
+slink /bin/tail        /bin/busybox 0777 0 0
+slink /bin/grep        /bin/busybox 0777 0 0
+slink /bin/sed         /bin/busybox 0777 0 0
+slink /bin/awk         /bin/busybox 0777 0 0
+slink /bin/sort        /bin/busybox 0777 0 0
+slink /bin/uniq        /bin/busybox 0777 0 0
+slink /bin/wc          /bin/busybox 0777 0 0
+slink /bin/tr          /bin/busybox 0777 0 0
+slink /bin/cut         /bin/busybox 0777 0 0
+slink /bin/tee         /bin/busybox 0777 0 0
+slink /bin/xargs       /bin/busybox 0777 0 0
+slink /bin/printf      /bin/busybox 0777 0 0
+
+# Filesystem
+slink /bin/mount       /bin/busybox 0777 0 0
+slink /bin/umount      /bin/busybox 0777 0 0
+slink /bin/df          /bin/busybox 0777 0 0
+slink /bin/du          /bin/busybox 0777 0 0
+slink /bin/find        /bin/busybox 0777 0 0
+
+# Process management
+slink /bin/ps          /bin/busybox 0777 0 0
+slink /bin/kill        /bin/busybox 0777 0 0
+slink /bin/sleep       /bin/busybox 0777 0 0
+
+# System info
+slink /bin/dmesg       /bin/busybox 0777 0 0
+slink /bin/free        /bin/busybox 0777 0 0
+slink /bin/uptime      /bin/busybox 0777 0 0
+slink /bin/uname       /bin/busybox 0777 0 0
+slink /bin/hostname    /bin/busybox 0777 0 0
+slink /bin/id          /bin/busybox 0777 0 0
+slink /bin/whoami      /bin/busybox 0777 0 0
+
+# Misc utilities
+slink /bin/env         /bin/busybox 0777 0 0
+slink /bin/printenv    /bin/busybox 0777 0 0
+slink /bin/test        /bin/busybox 0777 0 0
+slink /bin/expr        /bin/busybox 0777 0 0
+slink /bin/seq         /bin/busybox 0777 0 0
+slink /bin/true        /bin/busybox 0777 0 0
+slink /bin/false       /bin/busybox 0777 0 0
+slink /bin/clear       /bin/busybox 0777 0 0
+slink /bin/reset       /bin/busybox 0777 0 0
+slink /bin/vi          /bin/busybox 0777 0 0
+slink /bin/hexdump     /bin/busybox 0777 0 0
+slink /bin/od          /bin/busybox 0777 0 0
+
+# /sbin utilities
+slink /sbin/halt       /bin/busybox 0777 0 0
+slink /sbin/poweroff   /bin/busybox 0777 0 0
+slink /sbin/reboot     /bin/busybox 0777 0 0
+slink /sbin/mdev       /bin/busybox 0777 0 0
