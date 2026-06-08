@@ -1,7 +1,12 @@
+use std::collections::VecDeque;
 use std::env;
 use std::fs;
+use std::io::Read;
 use std::process;
+use std::sync::{Arc, Mutex};
+use std::thread;
 
+use crossterm::terminal;
 use goblin::elf::{header, Elf};
 use rvsim_core::cpu::Hart;
 use rvsim_core::mem::Memory;
@@ -10,6 +15,14 @@ use rvsim_mem::clint::Clint;
 use rvsim_mem::flat::FlatMemory;
 use rvsim_mem::plic::Plic;
 use rvsim_mem::uart::Uart;
+
+struct RawModeGuard;
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = terminal::disable_raw_mode();
+    }
+}
 
 const RAM_BASE: u32 = 0x8000_0000;
 const RAM_SIZE: usize = 256 * 1024 * 1024; // 256 MB
@@ -179,7 +192,29 @@ fn main() {
     });
 
     let ram = FlatMemory::new(RAM_SIZE, RAM_BASE);
-    let mut bus = Bus::new(ram, Clint::new(), Plic::new(), Uart::stdout());
+    let rx_queue = Arc::new(Mutex::new(VecDeque::new()));
+    let uart = Uart::new(Box::new(std::io::stdout()), rx_queue.clone());
+    let mut bus = Bus::new(ram, Clint::new(), Plic::new(), uart);
+
+    let _raw_guard = if args.kernel_path.is_some() {
+        terminal::enable_raw_mode().ok();
+        let rq = rx_queue.clone();
+        thread::spawn(move || {
+            let mut stdin = std::io::stdin().lock();
+            let mut buf = [0u8; 1];
+            while stdin.read(&mut buf).unwrap_or(0) > 0 {
+                if buf[0] == 0x03 {
+                    // Ctrl-C: restore terminal and exit
+                    let _ = terminal::disable_raw_mode();
+                    process::exit(0);
+                }
+                rq.lock().unwrap().push_back(buf[0]);
+            }
+        });
+        Some(RawModeGuard)
+    } else {
+        None
+    };
 
     // For PIE firmware (ET_DYN, e.g. OpenSBI fw_jump.elf), p_paddr is a
     // *relative* offset — the previous stage chooses the load base. Default

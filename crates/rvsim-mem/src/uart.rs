@@ -1,4 +1,4 @@
-//! Minimal NS16550A subset — just enough for OpenSBI/Linux `printf` early console.
+//! Minimal NS16550A subset — just enough for OpenSBI/Linux console.
 //!
 //! Registers (1 byte each, offsets from base):
 //! - 0: THR (write) / RBR (read)
@@ -11,10 +11,12 @@
 //! - 7: SCR  — scratch
 //!
 //! Output goes to a user-supplied sink (`Box<dyn Write>`), defaulting to stdout.
-//! No RX yet — reading RBR returns 0 and LSR.DR stays clear.
+//! Input is fed via a shared `rx_queue` (`Arc<Mutex<VecDeque<u8>>>`).
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::io::{self, Write};
+use std::sync::{Arc, Mutex};
 
 use rvsim_core::trap::Trap;
 
@@ -31,16 +33,20 @@ const REG_MSR: u32 = 6;
 const REG_SCR: u32 = 7;
 
 // LSR bits: bit 6 = transmitter empty, bit 5 = THR empty. Always set —
-// we never block on TX. Bit 0 = data-ready (RX) — always clear (no input).
-const LSR_DEFAULT: u8 = (1 << 6) | (1 << 5);
+// we never block on TX.
+const LSR_TX_EMPTY: u8 = (1 << 6) | (1 << 5);
+const LSR_DR: u8 = 1 << 0; // Data Ready (RX buffer non-empty)
+
 const MSR_DEFAULT: u8 = 0xB0; // CD, DSR, CTS asserted
 
 const LCR_DLAB: u8 = 1 << 7;
 const MCR_LOOP: u8 = 1 << 4;
 
-const IER_THRE: u8 = 1 << 1;
+const IER_RDA: u8 = 1 << 0;  // Received Data Available
+const IER_THRE: u8 = 1 << 1; // THR Empty
 const IIR_NONE: u8 = 0x01;
-const IIR_THRE: u8 = 0x02;
+const IIR_RDA: u8 = 0x04;    // Received Data Available (priority 2)
+const IIR_THRE: u8 = 0x02;   // THR Empty (priority 3)
 
 struct State {
     ier: u8,
@@ -56,6 +62,7 @@ struct State {
 
 pub struct Uart {
     state: RefCell<State>,
+    rx_queue: Arc<Mutex<VecDeque<u8>>>,
 }
 
 impl Uart {
@@ -64,6 +71,10 @@ impl Uart {
     }
 
     pub fn with_sink(sink: Box<dyn Write + Send>) -> Self {
+        Self::new(sink, Arc::new(Mutex::new(VecDeque::new())))
+    }
+
+    pub fn new(sink: Box<dyn Write + Send>, rx_queue: Arc<Mutex<VecDeque<u8>>>) -> Self {
         Self {
             state: RefCell::new(State {
                 ier: 0,
@@ -76,12 +87,19 @@ impl Uart {
                 thre_ip: false,
                 sink,
             }),
+            rx_queue,
         }
+    }
+
+    fn rx_has_data(&self) -> bool {
+        self.rx_queue.lock().unwrap().is_empty() == false
     }
 
     pub fn interrupt_pending(&self) -> bool {
         let s = self.state.borrow();
-        s.ier & IER_THRE != 0 && s.thre_ip
+        let thre = s.ier & IER_THRE != 0 && s.thre_ip;
+        let rda = s.ier & IER_RDA != 0 && self.rx_has_data();
+        thre || rda
     }
 
     pub fn read8(&self, offset: u32) -> Result<u8, Trap> {
@@ -89,7 +107,12 @@ impl Uart {
         let val = match reg {
             REG_THR_RBR => {
                 let s = self.state.borrow();
-                if s.lcr & LCR_DLAB != 0 { s.dll } else { 0 }
+                if s.lcr & LCR_DLAB != 0 {
+                    s.dll
+                } else {
+                    drop(s);
+                    self.rx_queue.lock().unwrap().pop_front().unwrap_or(0)
+                }
             }
             REG_IER => {
                 let s = self.state.borrow();
@@ -98,7 +121,10 @@ impl Uart {
             REG_IIR_FCR => {
                 let mut s = self.state.borrow_mut();
                 let fifo_bits = if s.fcr & 0x01 != 0 { 0xC0u8 } else { 0 };
-                if s.ier & IER_THRE != 0 && s.thre_ip {
+                // RDA has higher priority than THRE per NS16550A spec
+                if s.ier & IER_RDA != 0 && self.rx_has_data() {
+                    IIR_RDA | fifo_bits
+                } else if s.ier & IER_THRE != 0 && s.thre_ip {
                     s.thre_ip = false;
                     IIR_THRE | fifo_bits
                 } else {
@@ -107,11 +133,16 @@ impl Uart {
             }
             REG_LCR => self.state.borrow().lcr,
             REG_MCR => self.state.borrow().mcr,
-            REG_LSR => LSR_DEFAULT,
+            REG_LSR => {
+                let mut lsr = LSR_TX_EMPTY;
+                if self.rx_has_data() {
+                    lsr |= LSR_DR;
+                }
+                lsr
+            }
             REG_MSR => {
                 let s = self.state.borrow();
                 if s.mcr & MCR_LOOP != 0 {
-                    // Loopback: MCR outputs reflect to MSR inputs
                     let mcr = s.mcr;
                     let mut msr: u8 = 0;
                     if mcr & 0x01 != 0 { msr |= 0x20; } // DTR → DSR
@@ -237,6 +268,14 @@ mod tests {
         (Uart::with_sink(Box::new(sink)), buf)
     }
 
+    fn uart_with_rx() -> (Uart, Arc<Mutex<Vec<u8>>>, Arc<Mutex<VecDeque<u8>>>) {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let rx = Arc::new(Mutex::new(VecDeque::new()));
+        let sink = VecSink(buf.clone());
+        let uart = Uart::new(Box::new(sink), rx.clone());
+        (uart, buf, rx)
+    }
+
     #[test]
     fn tx_writes_byte_to_sink() {
         let (uart, buf) = uart_with_sink();
@@ -246,11 +285,45 @@ mod tests {
     }
 
     #[test]
-    fn lsr_always_reports_thr_empty() {
+    fn lsr_reports_thr_empty_no_rx() {
         let (uart, _) = uart_with_sink();
         let lsr = uart.read8(REG_LSR).unwrap();
         assert!(lsr & (1 << 5) != 0, "THR-empty bit must be set");
-        assert!(lsr & (1 << 0) == 0, "data-ready bit must be clear (no RX)");
+        assert!(lsr & LSR_DR == 0, "data-ready bit must be clear (no RX data)");
+    }
+
+    #[test]
+    fn rx_data_ready_and_read() {
+        let (uart, _, rx) = uart_with_rx();
+        rx.lock().unwrap().push_back(b'X');
+
+        let lsr = uart.read8(REG_LSR).unwrap();
+        assert!(lsr & LSR_DR != 0, "data-ready must be set when RX has data");
+
+        let ch = uart.read8(REG_THR_RBR).unwrap();
+        assert_eq!(ch, b'X');
+
+        let lsr = uart.read8(REG_LSR).unwrap();
+        assert!(lsr & LSR_DR == 0, "data-ready must be clear after consuming");
+    }
+
+    #[test]
+    fn rx_interrupt_pending() {
+        let (uart, _, rx) = uart_with_rx();
+        // Enable RDA interrupt
+        uart.write8(REG_IER, IER_RDA).unwrap();
+        assert!(!uart.interrupt_pending(), "no data yet");
+
+        rx.lock().unwrap().push_back(b'A');
+        assert!(uart.interrupt_pending(), "RDA should fire with data");
+
+        // IIR should report RDA
+        let iir = uart.read8(REG_IIR_FCR).unwrap();
+        assert_eq!(iir & 0x0F, IIR_RDA);
+
+        // Consume the byte
+        uart.read8(REG_THR_RBR).unwrap();
+        assert!(!uart.interrupt_pending(), "no more data");
     }
 
     #[test]
@@ -294,6 +367,7 @@ mod tests {
     fn lsr_is_read_only() {
         let (uart, _) = uart_with_sink();
         uart.write8(REG_LSR, 0xFF).unwrap();
-        assert_eq!(uart.read8(REG_LSR).unwrap(), LSR_DEFAULT);
+        let lsr = uart.read8(REG_LSR).unwrap();
+        assert_eq!(lsr, LSR_TX_EMPTY);
     }
 }
