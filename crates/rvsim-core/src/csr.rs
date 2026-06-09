@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::trap::Trap;
 
 // F-extension CSRs
@@ -142,7 +140,7 @@ fn mstatus_with_sd(v: u32) -> u32 {
 }
 
 pub struct CsrFile {
-    regs: HashMap<u16, u32>,
+    regs: [u32; 4096],
 }
 
 impl Default for CsrFile {
@@ -153,13 +151,12 @@ impl Default for CsrFile {
 
 impl CsrFile {
     pub fn new() -> Self {
-        let mut regs = HashMap::new();
+        let mut regs = [0u32; 4096];
         // misa: RV32IMACSU. Treated as WARL — writes are ignored (see write()).
         // S and U are required for OpenSBI: it probes misa to decide whether
         // to bring up an S-mode payload, and refuses to run the lottery /
         // coldboot path otherwise.
-        regs.insert(
-            CSR_MISA,
+        regs[CSR_MISA as usize] =
             (1 << 30)   // MXL = 1 (32-bit)
                 | (1 << 20) // U
                 | (1 << 18) // S
@@ -168,69 +165,7 @@ impl CsrFile {
                 | (1 << 5)  // F
                 | (1 << 3)  // D
                 | (1 << 2)  // C
-                | (1 << 0), // A
-        );
-        // F-extension CSRs. Canonical value lives in FCSR; fflags/frm alias into it.
-        regs.insert(CSR_FCSR, 0);
-        regs.insert(CSR_FFLAGS, 0);
-        regs.insert(CSR_FRM, 0);
-        // Read-only-zero machine ID CSRs.
-        regs.insert(CSR_MVENDORID, 0);
-        regs.insert(CSR_MARCHID, 0);
-        regs.insert(CSR_MIMPID, 0);
-        regs.insert(CSR_MHARTID, 0);
-        regs.insert(CSR_MCONFIGPTR, 0);
-        regs.insert(CSR_MSTATUS, 0);
-        regs.insert(CSR_MTVEC, 0);
-        regs.insert(CSR_MCOUNTEREN, 0);
-        regs.insert(CSR_MENVCFG, 0);
-        regs.insert(CSR_MSTATUSH, 0);
-        regs.insert(CSR_MENVCFGH, 0);
-        regs.insert(CSR_MCOUNTINHIBIT, 0);
-        // M-mode shadows of cycle/instret. We don't drive them — the U-mode
-        // read-only aliases (CSR_CYCLE/INSTRET) already serve reads. Register
-        // them here so writes from M-mode firmware succeed (RAZ/WI in effect).
-        regs.insert(CSR_MCYCLE, 0);
-        regs.insert(CSR_MINSTRET, 0);
-        regs.insert(CSR_MCYCLEH, 0);
-        regs.insert(CSR_MINSTRETH, 0);
-        // mhpmevent3..31, mhpmcounter3..31, mhpmcounter3h..31h — RAZ/WI.
-        for i in 3..=31u16 {
-            regs.insert(CSR_MHPMEVENT_BASE + (i - 3), 0);
-            regs.insert(CSR_MHPMCOUNTER_BASE + (i - 3), 0);
-            regs.insert(CSR_MHPMCOUNTERH_BASE + (i - 3), 0);
-        }
-        regs.insert(CSR_MEPC, 0);
-        regs.insert(CSR_MCAUSE, 0);
-        regs.insert(CSR_MTVAL, 0);
-        regs.insert(CSR_MEDELEG, 0);
-        regs.insert(CSR_MIDELEG, 0);
-        regs.insert(CSR_MIE, 0);
-        regs.insert(CSR_MIP, 0);
-        regs.insert(CSR_MSCRATCH, 0);
-        regs.insert(CSR_SATP, 0);
-        regs.insert(CSR_STVEC, 0);
-        regs.insert(CSR_SCOUNTEREN, 0);
-        regs.insert(CSR_SENVCFG, 0);
-        for i in 0..PMP_NUM_ENTRIES as u16 {
-            regs.insert(CSR_PMPADDR0 + i, 0);
-        }
-        regs.insert(CSR_PMPCFG0, 0);
-        regs.insert(CSR_PMPCFG1, 0);
-        regs.insert(CSR_PMPCFG2, 0);
-        regs.insert(CSR_PMPCFG3, 0);
-        // S-mode CSRs
-        regs.insert(CSR_SSCRATCH, 0);
-        regs.insert(CSR_SEPC, 0);
-        regs.insert(CSR_SCAUSE, 0);
-        regs.insert(CSR_STVAL, 0);
-        regs.insert(CSR_SIE, 0);
-        regs.insert(CSR_SIP, 0);
-        // Trigger module CSRs — RAZ/WI (no hardware triggers implemented).
-        regs.insert(CSR_TSELECT, 0);
-        regs.insert(CSR_TDATA1, 0);
-        regs.insert(CSR_TDATA2, 0);
-        regs.insert(CSR_TCONTROL, 0);
+                | (1 << 0); // A
         Self { regs }
     }
 
@@ -251,7 +186,6 @@ impl CsrFile {
     }
 
     pub fn read(&self, addr: u16, cycle: u64, instret: u64, mtime: u64, priv_mode: u8) -> Result<u32, Trap> {
-        // Privilege check
         if priv_mode < Self::min_priv(addr) {
             return Err(Trap::IllegalInstruction);
         }
@@ -265,12 +199,12 @@ impl CsrFile {
                 _ => None,
             };
             if let Some(bit) = counter_bit {
-                let mcen = self.regs.get(&CSR_MCOUNTEREN).copied().unwrap_or(0);
+                let mcen = self.regs[CSR_MCOUNTEREN as usize];
                 if (mcen >> bit) & 1 == 0 {
                     return Err(Trap::IllegalInstruction);
                 }
                 if priv_mode == 0 {
-                    let scen = self.regs.get(&CSR_SCOUNTEREN).copied().unwrap_or(0);
+                    let scen = self.regs[CSR_SCOUNTEREN as usize];
                     if (scen >> bit) & 1 == 0 {
                         return Err(Trap::IllegalInstruction);
                     }
@@ -284,38 +218,19 @@ impl CsrFile {
             CSR_TIMEH => Ok((mtime >> 32) as u32),
             CSR_INSTRET | CSR_MINSTRET => Ok(instret as u32),
             CSR_INSTRETH | CSR_MINSTRETH => Ok((instret >> 32) as u32),
-            CSR_FCSR => {
-                let fcsr = self.regs.get(&CSR_FCSR).copied().unwrap_or(0);
-                Ok(fcsr & 0xFF)
-            }
-            CSR_FFLAGS => {
-                let fcsr = self.regs.get(&CSR_FCSR).copied().unwrap_or(0);
-                Ok(fcsr & 0x1F)
-            }
-            CSR_FRM => {
-                let fcsr = self.regs.get(&CSR_FCSR).copied().unwrap_or(0);
-                Ok((fcsr >> 5) & 0x7)
-            }
-            CSR_MSTATUS => {
-                let v = self.regs.get(&CSR_MSTATUS).copied().unwrap_or(0);
-                Ok(mstatus_with_sd(v))
-            }
-            // sstatus is a masked view of mstatus
-            CSR_SSTATUS => {
-                let mstatus = self.regs.get(&CSR_MSTATUS).copied().unwrap_or(0);
-                Ok(mstatus_with_sd(mstatus) & SSTATUS_MASK)
-            }
-            // sie / sip are masked views of mie / mip
-            CSR_SIE => Ok(self.regs.get(&CSR_MIE).copied().unwrap_or(0) & SIE_SIP_MASK),
-            CSR_SIP => Ok(self.regs.get(&CSR_MIP).copied().unwrap_or(0) & SIE_SIP_MASK),
-            // Trigger module: no triggers implemented — read as zero.
+            CSR_FCSR => Ok(self.regs[CSR_FCSR as usize] & 0xFF),
+            CSR_FFLAGS => Ok(self.regs[CSR_FCSR as usize] & 0x1F),
+            CSR_FRM => Ok((self.regs[CSR_FCSR as usize] >> 5) & 0x7),
+            CSR_MSTATUS => Ok(mstatus_with_sd(self.regs[CSR_MSTATUS as usize])),
+            CSR_SSTATUS => Ok(mstatus_with_sd(self.regs[CSR_MSTATUS as usize]) & SSTATUS_MASK),
+            CSR_SIE => Ok(self.regs[CSR_MIE as usize] & SIE_SIP_MASK),
+            CSR_SIP => Ok(self.regs[CSR_MIP as usize] & SIE_SIP_MASK),
             CSR_TSELECT | CSR_TDATA1 | CSR_TDATA2 | CSR_TCONTROL => Ok(0),
-            _ => self.regs.get(&addr).copied().ok_or(Trap::IllegalInstruction),
+            _ => Ok(self.regs[addr as usize]),
         }
     }
 
     pub fn write(&mut self, addr: u16, val: u32, priv_mode: u8) -> Result<(), Trap> {
-        // Privilege check
         if priv_mode < Self::min_priv(addr) {
             return Err(Trap::IllegalInstruction);
         }
@@ -326,84 +241,68 @@ impl CsrFile {
             CSR_CYCLE | CSR_CYCLEH | CSR_INSTRET | CSR_INSTRETH => {
                 Err(Trap::IllegalInstruction)
             }
-            // misa is WARL with no software-toggleable extensions: writes are silently ignored.
             CSR_MISA => Ok(()),
             CSR_FCSR => {
-                self.regs.insert(CSR_FCSR, val & 0xFF);
+                self.regs[CSR_FCSR as usize] = val & 0xFF;
                 Ok(())
             }
             CSR_FFLAGS => {
-                let e = self.regs.entry(CSR_FCSR).or_insert(0);
-                *e = (*e & !0x1F) | (val & 0x1F);
+                self.regs[CSR_FCSR as usize] = (self.regs[CSR_FCSR as usize] & !0x1F) | (val & 0x1F);
                 Ok(())
             }
             CSR_FRM => {
-                let e = self.regs.entry(CSR_FCSR).or_insert(0);
-                *e = (*e & !0xE0) | ((val & 0x7) << 5);
+                self.regs[CSR_FCSR as usize] = (self.regs[CSR_FCSR as usize] & !0xE0) | ((val & 0x7) << 5);
                 Ok(())
             }
             CSR_SSTATUS => {
-                let e = self.regs.entry(CSR_MSTATUS).or_insert(0);
-                *e = (*e & !SSTATUS_MASK) | (val & SSTATUS_MASK);
+                self.regs[CSR_MSTATUS as usize] = (self.regs[CSR_MSTATUS as usize] & !SSTATUS_MASK) | (val & SSTATUS_MASK);
                 Ok(())
             }
-            // sie / sip write through to mie / mip, only the S-visible bits.
             CSR_SIE => {
-                let e = self.regs.entry(CSR_MIE).or_insert(0);
-                *e = (*e & !SIE_SIP_MASK) | (val & SIE_SIP_MASK);
+                self.regs[CSR_MIE as usize] = (self.regs[CSR_MIE as usize] & !SIE_SIP_MASK) | (val & SIE_SIP_MASK);
                 Ok(())
             }
             CSR_SIP => {
-                // From S-mode, only SSIP is software-writable inside the S-visible mask.
-                let e = self.regs.entry(CSR_MIP).or_insert(0);
-                *e = (*e & !MIP_SSIP) | (val & MIP_SSIP);
+                self.regs[CSR_MIP as usize] = (self.regs[CSR_MIP as usize] & !MIP_SSIP) | (val & MIP_SSIP);
                 Ok(())
             }
-            // Trigger module: no triggers implemented — writes silently ignored.
             CSR_TSELECT | CSR_TDATA1 | CSR_TDATA2 | CSR_TCONTROL => Ok(()),
-            // mip: only SSIP/MSIP/STIP are software-writable. MTIP/MEIP/SEIP are HW-driven.
             CSR_MIP => {
-                let e = self.regs.entry(CSR_MIP).or_insert(0);
-                *e = (*e & !MIP_SW_WRITABLE) | (val & MIP_SW_WRITABLE);
+                self.regs[CSR_MIP as usize] = (self.regs[CSR_MIP as usize] & !MIP_SW_WRITABLE) | (val & MIP_SW_WRITABLE);
                 Ok(())
             }
             _ => {
-                use std::collections::hash_map::Entry;
-                if let Entry::Occupied(mut e) = self.regs.entry(addr) {
-                    e.insert(val);
-                    Ok(())
-                } else {
-                    Err(Trap::IllegalInstruction)
-                }
+                self.regs[addr as usize] = val;
+                Ok(())
             }
         }
     }
 
     /// Direct read of a register (bypasses privilege checks) — used internally by Hart
     pub fn read_raw(&self, addr: u16) -> u32 {
-        self.regs.get(&addr).copied().unwrap_or(0)
+        self.regs[addr as usize]
     }
 
     /// Direct write of a register (bypasses privilege checks) — used internally by Hart
     pub fn write_raw(&mut self, addr: u16, val: u32) {
-        self.regs.insert(addr, val);
+        self.regs[addr as usize] = val;
     }
 
     /// Trap entry: save priv to xPP, copy xIE to xPIE, clear xIE.
     pub fn mstatus_trap_enter(&mut self, prev_priv: u8, ie_bit: u32, pie_bit: u32, pp_shift: u32, pp_mask: u32) {
-        let mut v = self.read_raw(CSR_MSTATUS);
+        let mut v = self.regs[CSR_MSTATUS as usize];
         v = (v & !pp_mask) | ((prev_priv as u32) << pp_shift);
         let ie = (v >> ie_bit) & 1;
         v = (v & !(1 << pie_bit)) | (ie << pie_bit);
         v &= !(1 << ie_bit);
-        self.write_raw(CSR_MSTATUS, v);
+        self.regs[CSR_MSTATUS as usize] = v;
     }
 
     /// Trap return: restore priv from xPP, copy xPIE to xIE, set xPIE=1, clear xPP.
     /// Also clears MPRV when returning to a mode less privileged than M
     /// (privileged spec 1.12+).
     pub fn mstatus_trap_return(&mut self, ie_bit: u32, pie_bit: u32, pp_shift: u32, pp_mask: u32) -> u8 {
-        let mut v = self.read_raw(CSR_MSTATUS);
+        let mut v = self.regs[CSR_MSTATUS as usize];
         let priv_mode = ((v >> pp_shift) & (pp_mask >> pp_shift)) as u8;
         let pie = (v >> pie_bit) & 1;
         v = (v & !(1 << ie_bit)) | (pie << ie_bit);
@@ -412,7 +311,7 @@ impl CsrFile {
         if priv_mode != 3 {
             v &= !MSTATUS_MPRV;
         }
-        self.write_raw(CSR_MSTATUS, v);
+        self.regs[CSR_MSTATUS as usize] = v;
         priv_mode
     }
 }
