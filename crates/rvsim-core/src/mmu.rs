@@ -55,7 +55,7 @@ const LEVELS: i32 = 2;
 ///
 /// Returns `Err(page_fault_on_va)` on any failure. The error's `tval` is always
 /// the original virtual address (per Privileged spec).
-pub fn translate(hart: &Hart, mem: &dyn Memory, va: u32, access: AccessType) -> Result<u32, TrapInfo> {
+pub fn translate<M: Memory>(hart: &Hart, mem: &M, va: u32, access: AccessType) -> Result<u32, TrapInfo> {
     let mstatus = hart.csrs.read_raw(CSR_MSTATUS);
 
     // Effective privilege: fetches always use current priv; loads/stores in

@@ -59,7 +59,7 @@ impl Hart {
     }
 
     /// Translate `va` with the given access type. Page-fault errors carry the VA as `tval`.
-    pub fn translate(&self, mem: &dyn Memory, va: u32, access: AccessType) -> Result<u32, TrapInfo> {
+    pub fn translate<M: Memory>(&self, mem: &M, va: u32, access: AccessType) -> Result<u32, TrapInfo> {
         translate(self, mem, va, access)
     }
 
@@ -68,7 +68,7 @@ impl Hart {
     /// are translated separately so a 4-byte instruction can straddle a page
     /// boundary — the second halfword may fault independently with the correct
     /// VA in tval.
-    pub fn fetch_inst(&self, mem: &mut dyn Memory) -> Result<(u32, u8), TrapInfo> {
+    pub fn fetch_inst<M: Memory>(&self, mem: &M) -> Result<(u32, u8), TrapInfo> {
         let pa_lo = self.translate(mem, self.pc, AccessType::Fetch)?;
         let lo = mem
             .read16(pa_lo)
@@ -87,39 +87,39 @@ impl Hart {
         Ok((((hi as u32) << 16) | lo as u32, 4))
     }
 
-    pub fn load8(&self, mem: &mut dyn Memory, va: u32) -> Result<u8, TrapInfo> {
+    pub fn load8<M: Memory>(&self, mem: &M, va: u32) -> Result<u8, TrapInfo> {
         let pa = self.translate(mem, va, AccessType::Load)?;
         Ok(mem.read8(pa)?)
     }
-    pub fn load16(&self, mem: &mut dyn Memory, va: u32) -> Result<u16, TrapInfo> {
+    pub fn load16<M: Memory>(&self, mem: &M, va: u32) -> Result<u16, TrapInfo> {
         let pa = self.translate(mem, va, AccessType::Load)?;
         Ok(mem.read16(pa)?)
     }
-    pub fn load32(&self, mem: &mut dyn Memory, va: u32) -> Result<u32, TrapInfo> {
+    pub fn load32<M: Memory>(&self, mem: &M, va: u32) -> Result<u32, TrapInfo> {
         let pa = self.translate(mem, va, AccessType::Load)?;
         Ok(mem.read32(pa)?)
     }
-    pub fn store8(&mut self, mem: &mut dyn Memory, va: u32, val: u8) -> Result<(), TrapInfo> {
+    pub fn store8<M: Memory>(&mut self, mem: &mut M, va: u32, val: u8) -> Result<(), TrapInfo> {
         self.reservation = None;
         let pa = self.translate(mem, va, AccessType::Store)?;
         Ok(mem.write8(pa, val)?)
     }
-    pub fn store16(&mut self, mem: &mut dyn Memory, va: u32, val: u16) -> Result<(), TrapInfo> {
+    pub fn store16<M: Memory>(&mut self, mem: &mut M, va: u32, val: u16) -> Result<(), TrapInfo> {
         self.reservation = None;
         let pa = self.translate(mem, va, AccessType::Store)?;
         Ok(mem.write16(pa, val)?)
     }
-    pub fn store32(&mut self, mem: &mut dyn Memory, va: u32, val: u32) -> Result<(), TrapInfo> {
+    pub fn store32<M: Memory>(&mut self, mem: &mut M, va: u32, val: u32) -> Result<(), TrapInfo> {
         self.reservation = None;
         let pa = self.translate(mem, va, AccessType::Store)?;
         Ok(mem.write32(pa, val)?)
     }
-    pub fn load64(&self, mem: &mut dyn Memory, va: u32) -> Result<u64, TrapInfo> {
+    pub fn load64<M: Memory>(&self, mem: &M, va: u32) -> Result<u64, TrapInfo> {
         let lo = self.load32(mem, va)? as u64;
         let hi = self.load32(mem, va.wrapping_add(4))? as u64;
         Ok((hi << 32) | lo)
     }
-    pub fn store64(&mut self, mem: &mut dyn Memory, va: u32, val: u64) -> Result<(), TrapInfo> {
+    pub fn store64<M: Memory>(&mut self, mem: &mut M, va: u32, val: u64) -> Result<(), TrapInfo> {
         self.store32(mem, va, val as u32)?;
         self.store32(mem, va.wrapping_add(4), (val >> 32) as u32)?;
         Ok(())
@@ -128,7 +128,7 @@ impl Hart {
     /// Drive one instruction. `pending_hw` carries mip bits set by hardware
     /// sources outside the CPU (CLINT MTIP/MSIP, PLIC SEIP). Software-writable
     /// bits already in `mip` are preserved.
-    pub fn step(&mut self, mem: &mut dyn Memory, pending_hw: u32) {
+    pub fn step<M: Memory>(&mut self, mem: &mut M, pending_hw: u32) {
         // Merge HW-driven mip bits with software-set bits.
         let sw = self.csrs.read_raw(CSR_MIP) & MIP_SW_WRITABLE_PUB;
         self.csrs.write_raw(CSR_MIP, sw | pending_hw);
@@ -269,7 +269,7 @@ fn trap_target(xtvec: u32, info: TrapInfo) -> u32 {
 }
 
 impl Hart {
-    pub fn run(&mut self, mem: &mut dyn Memory, max_cycles: u64) {
+    pub fn run<M: Memory>(&mut self, mem: &mut M, max_cycles: u64) {
         for _ in 0..max_cycles {
             self.step(mem, 0);
         }

@@ -15,9 +15,9 @@ use crate::trap::{Trap, TrapInfo};
 /// Execute one already-decoded instruction. `pc` is the address of this
 /// instruction (i.e. the value of PC before step() advanced it by the
 /// instruction width).
-pub fn execute(
+pub fn execute<M: Memory>(
     hart: &mut Hart,
-    mem: &mut dyn Memory,
+    mem: &mut M,
     inst: Instruction,
     pc: u32,
 ) -> Result<(), TrapInfo> {
@@ -1434,9 +1434,9 @@ fn f64_fma(a: f64, b: f64, c: f64) -> (f64, u32) {
 /// AMO helper: translate twice (Load then Store), read, compute new value, write.
 /// Both translations happen up front so that a D-bit fault on the store side is
 /// raised before any architectural side effects. AMOs require 4-byte alignment.
-fn amo_load_store<F>(
+fn amo_load_store<F, M: Memory>(
     hart: &mut Hart,
-    mem: &mut dyn Memory,
+    mem: &mut M,
     va: u32,
     op: F,
 ) -> Result<u32, TrapInfo>
