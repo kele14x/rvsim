@@ -93,7 +93,8 @@ pub fn execute(
         }
         Instruction::AmoswapW { rd, rs1, rs2 } => {
             let va = hart.regs.get(rs1);
-            let old = amo_load_store(hart, mem, va, |_| hart.regs.get(rs2))?;
+            let rs2v = hart.regs.get(rs2);
+            let old = amo_load_store(hart, mem, va, |_| rs2v)?;
             hart.regs.set(rd, old);
         }
         Instruction::AmoaddW { rd, rs1, rs2 } => {
@@ -357,9 +358,6 @@ pub fn execute(
         }
         Instruction::Jalr { rd, rs1, imm } => {
             let target = (hart.regs.get(rs1).wrapping_add(imm as u32)) & !1;
-            if target & 1 != 0 {
-                return Err(TrapInfo::new(Trap::InstructionAddressMisaligned, target));
-            }
             hart.regs.set(rd, hart.pc); // link address (PC + instruction width)
             hart.pc = target;
         }
@@ -1437,7 +1435,7 @@ fn f64_fma(a: f64, b: f64, c: f64) -> (f64, u32) {
 /// Both translations happen up front so that a D-bit fault on the store side is
 /// raised before any architectural side effects. AMOs require 4-byte alignment.
 fn amo_load_store<F>(
-    hart: &Hart,
+    hart: &mut Hart,
     mem: &mut dyn Memory,
     va: u32,
     op: F,
@@ -1448,6 +1446,7 @@ where
     if va & 0x3 != 0 {
         return Err(TrapInfo::new(Trap::StoreAddressMisaligned, va));
     }
+    hart.reservation = None;
     let pa_load = hart.translate(mem, va, AccessType::Load)?;
     let pa_store = hart.translate(mem, va, AccessType::Store)?;
     let old = mem.read32(pa_load)?;

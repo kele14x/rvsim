@@ -29,6 +29,14 @@ impl AccessType {
             AccessType::Store => Trap::StorePageFault,
         }
     }
+
+    fn access_fault(self) -> Trap {
+        match self {
+            AccessType::Fetch => Trap::InstructionAccessFault,
+            AccessType::Load => Trap::LoadAccessFault,
+            AccessType::Store => Trap::StoreAccessFault,
+        }
+    }
 }
 
 // PTE bit positions (Sv32)
@@ -81,7 +89,7 @@ pub fn translate(hart: &Hart, mem: &dyn Memory, va: u32, access: AccessType) -> 
         let pte_addr = a.wrapping_add(vpn[i as usize].wrapping_mul(4));
         let p = mem
             .read32(pte_addr)
-            .map_err(|_| TrapInfo::new(access.page_fault(), va))?;
+            .map_err(|_| TrapInfo::new(access.access_fault(), va))?;
 
         // Invalid or reserved encoding (W=1, R=0).
         if (p & PTE_V) == 0 || ((p & PTE_R) == 0 && (p & PTE_W) != 0) {

@@ -99,15 +99,18 @@ impl Hart {
         let pa = self.translate(mem, va, AccessType::Load)?;
         Ok(mem.read32(pa)?)
     }
-    pub fn store8(&self, mem: &mut dyn Memory, va: u32, val: u8) -> Result<(), TrapInfo> {
+    pub fn store8(&mut self, mem: &mut dyn Memory, va: u32, val: u8) -> Result<(), TrapInfo> {
+        self.reservation = None;
         let pa = self.translate(mem, va, AccessType::Store)?;
         Ok(mem.write8(pa, val)?)
     }
-    pub fn store16(&self, mem: &mut dyn Memory, va: u32, val: u16) -> Result<(), TrapInfo> {
+    pub fn store16(&mut self, mem: &mut dyn Memory, va: u32, val: u16) -> Result<(), TrapInfo> {
+        self.reservation = None;
         let pa = self.translate(mem, va, AccessType::Store)?;
         Ok(mem.write16(pa, val)?)
     }
-    pub fn store32(&self, mem: &mut dyn Memory, va: u32, val: u32) -> Result<(), TrapInfo> {
+    pub fn store32(&mut self, mem: &mut dyn Memory, va: u32, val: u32) -> Result<(), TrapInfo> {
+        self.reservation = None;
         let pa = self.translate(mem, va, AccessType::Store)?;
         Ok(mem.write32(pa, val)?)
     }
@@ -116,7 +119,7 @@ impl Hart {
         let hi = self.load32(mem, va.wrapping_add(4))? as u64;
         Ok((hi << 32) | lo)
     }
-    pub fn store64(&self, mem: &mut dyn Memory, va: u32, val: u64) -> Result<(), TrapInfo> {
+    pub fn store64(&mut self, mem: &mut dyn Memory, va: u32, val: u64) -> Result<(), TrapInfo> {
         self.store32(mem, va, val as u32)?;
         self.store32(mem, va.wrapping_add(4), (val >> 32) as u32)?;
         Ok(())

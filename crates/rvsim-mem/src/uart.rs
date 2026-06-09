@@ -92,7 +92,7 @@ impl Uart {
     }
 
     fn rx_has_data(&self) -> bool {
-        self.rx_queue.lock().unwrap().is_empty() == false
+        !self.rx_queue.lock().unwrap().is_empty()
     }
 
     pub fn interrupt_pending(&self) -> bool {
