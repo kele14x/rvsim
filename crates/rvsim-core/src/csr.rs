@@ -139,6 +139,34 @@ fn mstatus_with_sd(v: u32) -> u32 {
     }
 }
 
+fn is_valid_csr(addr: u16) -> bool {
+    match addr {
+        CSR_FFLAGS | CSR_FRM | CSR_FCSR => true,
+        CSR_CYCLE | CSR_TIME | CSR_INSTRET => true,
+        CSR_CYCLEH | CSR_TIMEH | CSR_INSTRETH => true,
+        CSR_SSTATUS | CSR_SIE | CSR_STVEC | CSR_SCOUNTEREN | CSR_SENVCFG => true,
+        CSR_SSCRATCH | CSR_SEPC | CSR_SCAUSE | CSR_STVAL | CSR_SIP => true,
+        CSR_SATP => true,
+        CSR_MSTATUS | CSR_MISA | CSR_MEDELEG | CSR_MIDELEG | CSR_MIE => true,
+        CSR_MTVEC | CSR_MCOUNTEREN | CSR_MENVCFG => true,
+        CSR_MSTATUSH | CSR_MENVCFGH => true,
+        CSR_MCOUNTINHIBIT => true,
+        CSR_MSCRATCH | CSR_MEPC | CSR_MCAUSE | CSR_MTVAL | CSR_MIP => true,
+        CSR_MCYCLE | CSR_MINSTRET | CSR_MCYCLEH | CSR_MINSTRETH => true,
+        CSR_PMPCFG0..=CSR_PMPCFG3 => true,
+        a if a >= CSR_PMPADDR0 && a < CSR_PMPADDR0 + PMP_NUM_ENTRIES as u16 => true,
+        // mhpmevent3..31
+        a if a >= CSR_MHPMEVENT_BASE && a < CSR_MHPMEVENT_BASE + 29 => true,
+        // mhpmcounter3..31
+        a if a >= CSR_MHPMCOUNTER_BASE && a < CSR_MHPMCOUNTER_BASE + 29 => true,
+        // mhpmcounter3h..31h
+        a if a >= CSR_MHPMCOUNTERH_BASE && a < CSR_MHPMCOUNTERH_BASE + 29 => true,
+        CSR_TSELECT | CSR_TDATA1 | CSR_TDATA2 | CSR_TCONTROL => true,
+        CSR_MVENDORID | CSR_MARCHID | CSR_MIMPID | CSR_MHARTID | CSR_MCONFIGPTR => true,
+        _ => false,
+    }
+}
+
 pub struct CsrFile {
     regs: [u32; 4096],
 }
@@ -226,7 +254,8 @@ impl CsrFile {
             CSR_SIE => Ok(self.regs[CSR_MIE as usize] & SIE_SIP_MASK),
             CSR_SIP => Ok(self.regs[CSR_MIP as usize] & SIE_SIP_MASK),
             CSR_TSELECT | CSR_TDATA1 | CSR_TDATA2 | CSR_TCONTROL => Ok(0),
-            _ => Ok(self.regs[addr as usize]),
+            _ if is_valid_csr(addr) => Ok(self.regs[addr as usize]),
+            _ => Err(Trap::IllegalInstruction),
         }
     }
 
@@ -271,10 +300,11 @@ impl CsrFile {
                 self.regs[CSR_MIP as usize] = (self.regs[CSR_MIP as usize] & !MIP_SW_WRITABLE) | (val & MIP_SW_WRITABLE);
                 Ok(())
             }
-            _ => {
+            _ if is_valid_csr(addr) => {
                 self.regs[addr as usize] = val;
                 Ok(())
             }
+            _ => Err(Trap::IllegalInstruction),
         }
     }
 
