@@ -173,7 +173,16 @@ fn parse_args() -> CliArgs {
         process::exit(1);
     });
 
-    CliArgs { elf_path, dtb_path, dtb_addr, hartid, load_base, kernel_path, kernel_addr, max_cycles }
+    CliArgs {
+        elf_path,
+        dtb_path,
+        dtb_addr,
+        hartid,
+        load_base,
+        kernel_path,
+        kernel_addr,
+        max_cycles,
+    }
 }
 
 fn parse_u32(s: &str) -> Option<u32> {
@@ -189,16 +198,22 @@ fn print_usage() {
     eprintln!();
     eprintln!("  --dtb <path>          Load a Flattened Device Tree blob and pass its");
     eprintln!("                        address in a1 at boot (a0 = hartid).");
-    eprintln!("  --dtb-addr <addr>     Where to place the DTB in RAM (default 0x{:08x}).",
-        DEFAULT_DTB_ADDR);
+    eprintln!(
+        "  --dtb-addr <addr>     Where to place the DTB in RAM (default 0x{:08x}).",
+        DEFAULT_DTB_ADDR
+    );
     eprintln!("  --hartid <n>          Value passed in a0 at boot (default 0).");
     eprintln!("  --load-base <addr>    Override load base for PIE/DYN ELFs");
-    eprintln!("                        (default 0x{:08x}; ignored for fixed-address ELFs).",
-        DEFAULT_PIE_BASE);
+    eprintln!(
+        "                        (default 0x{:08x}; ignored for fixed-address ELFs).",
+        DEFAULT_PIE_BASE
+    );
     eprintln!("  --kernel <path>       Load a raw kernel image (e.g. Linux Image) at");
     eprintln!("                        --kernel-addr for OpenSBI fw_jump to boot.");
-    eprintln!("  --kernel-addr <addr>  Where to load the kernel (default 0x{:08x}).",
-        DEFAULT_KERNEL_ADDR);
+    eprintln!(
+        "  --kernel-addr <addr>  Where to load the kernel (default 0x{:08x}).",
+        DEFAULT_KERNEL_ADDR
+    );
     eprintln!("  --max-cycles <n>      Maximum simulation cycles (default 1B).");
 }
 
@@ -260,7 +275,8 @@ fn run(args: CliArgs) -> i32 {
             let file_size = ph.p_filesz as usize;
             let vaddr = (ph.p_paddr as u32).wrapping_add(load_base);
             if file_size > 0 {
-                bus.ram.load(vaddr, &elf_data[file_offset..file_offset + file_size]);
+                bus.ram
+                    .load(vaddr, &elf_data[file_offset..file_offset + file_size]);
             }
         }
     }
@@ -279,12 +295,19 @@ fn run(args: CliArgs) -> i32 {
         if args.kernel_addr < RAM_BASE || end > RAM_BASE as u64 + RAM_SIZE as u64 {
             eprintln!(
                 "Kernel does not fit in RAM: addr=0x{:08x} len=0x{:x} ram=[0x{:08x},0x{:08x})",
-                args.kernel_addr, kernel.len(), RAM_BASE, RAM_BASE as u64 + RAM_SIZE as u64
+                args.kernel_addr,
+                kernel.len(),
+                RAM_BASE,
+                RAM_BASE as u64 + RAM_SIZE as u64
             );
             return 1;
         }
         bus.ram.load(args.kernel_addr, &kernel);
-        eprintln!("Loaded kernel ({} bytes) at 0x{:08x}", kernel.len(), args.kernel_addr);
+        eprintln!(
+            "Loaded kernel ({} bytes) at 0x{:08x}",
+            kernel.len(),
+            args.kernel_addr
+        );
     }
 
     // DTB loaded after kernel so it wins if they overlap.
@@ -300,7 +323,10 @@ fn run(args: CliArgs) -> i32 {
         if args.dtb_addr < RAM_BASE || end > RAM_BASE as u64 + RAM_SIZE as u64 {
             eprintln!(
                 "DTB does not fit in RAM: addr=0x{:08x} len=0x{:x} ram=[0x{:08x},0x{:08x})",
-                args.dtb_addr, dtb.len(), RAM_BASE, RAM_BASE as u64 + RAM_SIZE as u64
+                args.dtb_addr,
+                dtb.len(),
+                RAM_BASE,
+                RAM_BASE as u64 + RAM_SIZE as u64
             );
             return 1;
         }
@@ -314,9 +340,7 @@ fn run(args: CliArgs) -> i32 {
     let tohost_addr = elf
         .syms
         .iter()
-        .find(|sym| {
-            elf.strtab.get_at(sym.st_name) == Some("tohost")
-        })
+        .find(|sym| elf.strtab.get_at(sym.st_name) == Some("tohost"))
         .map(|sym| sym.st_value as u32);
 
     if tohost_addr.is_none() && dtb_loaded_at.is_none() {
@@ -344,11 +368,14 @@ fn run(args: CliArgs) -> i32 {
         hart.mtime = cycle_count;
         let pending = bus.pending_interrupts();
         if trace {
-            eprintln!("pc=0x{:08x} priv={} mstatus=0x{:08x} mip=0x{:x} mie=0x{:x}",
-                hart.pc, hart.priv_mode,
+            eprintln!(
+                "pc=0x{:08x} priv={} mstatus=0x{:08x} mip=0x{:x} mie=0x{:x}",
+                hart.pc,
+                hart.priv_mode,
                 hart.csrs.read_raw(rvsim_core::csr::CSR_MSTATUS),
                 hart.csrs.read_raw(rvsim_core::csr::CSR_MIP),
-                hart.csrs.read_raw(rvsim_core::csr::CSR_MIE));
+                hart.csrs.read_raw(rvsim_core::csr::CSR_MIE)
+            );
         }
         let prev_priv = hart.priv_mode;
         let a6 = hart.regs.get(6);
@@ -361,8 +388,10 @@ fn run(args: CliArgs) -> i32 {
         hart.step(&mut bus, pending);
         cycle_count += 1;
         if sbi_log && prev_priv == 1 && hart.priv_mode == 3 {
-            eprintln!("[{}] SBI ecall @ 0x{:08x}: eid=0x{:08x} fid=0x{:08x} a0=0x{:08x} a1=0x{:08x}",
-                cycle_count, ecall_pc, a7, a6, a0, a1);
+            eprintln!(
+                "[{}] SBI ecall @ 0x{:08x}: eid=0x{:08x} fid=0x{:08x} a0=0x{:08x} a1=0x{:08x}",
+                cycle_count, ecall_pc, a7, a6, a0, a1
+            );
         }
 
         // Check tohost after each step
@@ -382,16 +411,22 @@ fn run(args: CliArgs) -> i32 {
     }
 
     eprintln!("TIMEOUT: exceeded {} cycles", max_cycles);
-    eprintln!("  pc=0x{:08x}  priv={}  cycle={}",
-        hart.pc, hart.priv_mode, hart.cycle);
-    eprintln!("  mstatus=0x{:08x}  mip=0x{:08x}  mie=0x{:08x}",
+    eprintln!(
+        "  pc=0x{:08x}  priv={}  cycle={}",
+        hart.pc, hart.priv_mode, hart.cycle
+    );
+    eprintln!(
+        "  mstatus=0x{:08x}  mip=0x{:08x}  mie=0x{:08x}",
         hart.csrs.read_raw(rvsim_core::csr::CSR_MSTATUS),
         hart.csrs.read_raw(rvsim_core::csr::CSR_MIP),
-        hart.csrs.read_raw(rvsim_core::csr::CSR_MIE));
-    eprintln!("  mideleg=0x{:08x}  sepc=0x{:08x}  scause=0x{:08x}",
+        hart.csrs.read_raw(rvsim_core::csr::CSR_MIE)
+    );
+    eprintln!(
+        "  mideleg=0x{:08x}  sepc=0x{:08x}  scause=0x{:08x}",
         hart.csrs.read_raw(rvsim_core::csr::CSR_MIDELEG),
         hart.csrs.read_raw(rvsim_core::csr::CSR_SEPC),
-        hart.csrs.read_raw(rvsim_core::csr::CSR_SCAUSE));
+        hart.csrs.read_raw(rvsim_core::csr::CSR_SCAUSE)
+    );
     eprint!("  last PCs:");
     for i in 0..8 {
         eprint!(" 0x{:08x}", last_pcs[(pc_idx + i) & 7]);

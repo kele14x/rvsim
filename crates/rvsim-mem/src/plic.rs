@@ -123,7 +123,11 @@ impl Plic {
 
     fn ctx_from_offset(offset: u32) -> Option<usize> {
         let ctx = ((offset - 0x20_0000) / 0x1000) as usize;
-        if ctx < NUM_CONTEXTS { Some(ctx) } else { None }
+        if ctx < NUM_CONTEXTS {
+            Some(ctx)
+        } else {
+            None
+        }
     }
 
     pub fn read32(&self, offset: u32) -> Result<u32, Trap> {
@@ -132,7 +136,11 @@ impl Plic {
             // Source priority (source 0 reads as 0)
             off if off < 0x80 => {
                 let src = (off / 4) as usize;
-                Ok(if src <= NUM_SOURCES { s.priority[src] } else { 0 })
+                Ok(if src <= NUM_SOURCES {
+                    s.priority[src]
+                } else {
+                    0
+                })
             }
             // Pending bits
             0x1000 => Ok(s.pending),

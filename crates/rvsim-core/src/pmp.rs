@@ -30,7 +30,13 @@ use crate::trap::{Trap, TrapInfo};
 ///
 /// `va` is included only so the caller can attribute `tval` to the original
 /// virtual address — PMP itself only sees the post-translation `pa`.
-pub fn check(hart: &Hart, pa: u32, va: u32, access: AccessType, eff_priv: u8) -> Result<(), TrapInfo> {
+pub fn check(
+    hart: &Hart,
+    pa: u32,
+    va: u32,
+    access: AccessType,
+    eff_priv: u8,
+) -> Result<(), TrapInfo> {
     let mut prev_addr: u32 = 0;
     for i in 0..PMP_NUM_ENTRIES {
         let cfg = read_cfg(hart, i);

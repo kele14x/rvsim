@@ -26,7 +26,12 @@ enum Region {
 
 impl Bus {
     pub fn new(ram: FlatMemory, clint: Clint, plic: Plic, uart: Uart) -> Self {
-        Self { ram, clint, plic, uart }
+        Self {
+            ram,
+            clint,
+            plic,
+            uart,
+        }
     }
 
     fn region(addr: u32) -> Region {
@@ -140,7 +145,9 @@ mod tests {
             self.0.lock().unwrap().extend_from_slice(buf);
             Ok(buf.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     fn make_bus() -> (Bus, Arc<Mutex<Vec<u8>>>) {

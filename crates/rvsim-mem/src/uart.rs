@@ -42,11 +42,11 @@ const MSR_DEFAULT: u8 = 0xB0; // CD, DSR, CTS asserted
 const LCR_DLAB: u8 = 1 << 7;
 const MCR_LOOP: u8 = 1 << 4;
 
-const IER_RDA: u8 = 1 << 0;  // Received Data Available
+const IER_RDA: u8 = 1 << 0; // Received Data Available
 const IER_THRE: u8 = 1 << 1; // THR Empty
 const IIR_NONE: u8 = 0x01;
-const IIR_RDA: u8 = 0x04;    // Received Data Available (priority 2)
-const IIR_THRE: u8 = 0x02;   // THR Empty (priority 3)
+const IIR_RDA: u8 = 0x04; // Received Data Available (priority 2)
+const IIR_THRE: u8 = 0x02; // THR Empty (priority 3)
 
 struct State {
     ier: u8,
@@ -116,7 +116,11 @@ impl Uart {
             }
             REG_IER => {
                 let s = self.state.borrow();
-                if s.lcr & LCR_DLAB != 0 { s.dlm } else { s.ier }
+                if s.lcr & LCR_DLAB != 0 {
+                    s.dlm
+                } else {
+                    s.ier
+                }
             }
             REG_IIR_FCR => {
                 let mut s = self.state.borrow_mut();
@@ -145,10 +149,18 @@ impl Uart {
                 if s.mcr & MCR_LOOP != 0 {
                     let mcr = s.mcr;
                     let mut msr: u8 = 0;
-                    if mcr & 0x01 != 0 { msr |= 0x20; } // DTR → DSR
-                    if mcr & 0x02 != 0 { msr |= 0x10; } // RTS → CTS
-                    if mcr & 0x04 != 0 { msr |= 0x40; } // OUT1 → RI
-                    if mcr & 0x08 != 0 { msr |= 0x80; } // OUT2 → DCD
+                    if mcr & 0x01 != 0 {
+                        msr |= 0x20;
+                    } // DTR → DSR
+                    if mcr & 0x02 != 0 {
+                        msr |= 0x10;
+                    } // RTS → CTS
+                    if mcr & 0x04 != 0 {
+                        msr |= 0x40;
+                    } // OUT1 → RI
+                    if mcr & 0x08 != 0 {
+                        msr |= 0x80;
+                    } // OUT2 → DCD
                     msr
                 } else {
                     MSR_DEFAULT
@@ -165,8 +177,11 @@ impl Uart {
                 REG_IER if dlab => "DLM",
                 REG_IER => "IER",
                 REG_IIR_FCR => "IIR",
-                REG_LCR => "LCR", REG_MCR => "MCR", REG_MSR => "MSR",
-                REG_SCR => "SCR", _ => "???",
+                REG_LCR => "LCR",
+                REG_MCR => "MCR",
+                REG_MSR => "MSR",
+                REG_SCR => "SCR",
+                _ => "???",
             };
             eprintln!("[UART] read  {} = 0x{:02x}", reg_name, val);
         }
@@ -259,7 +274,9 @@ mod tests {
             self.0.lock().unwrap().extend_from_slice(buf);
             Ok(buf.len())
         }
-        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
 
     fn uart_with_sink() -> (Uart, Arc<Mutex<Vec<u8>>>) {
@@ -289,7 +306,10 @@ mod tests {
         let (uart, _) = uart_with_sink();
         let lsr = uart.read8(REG_LSR).unwrap();
         assert!(lsr & (1 << 5) != 0, "THR-empty bit must be set");
-        assert!(lsr & LSR_DR == 0, "data-ready bit must be clear (no RX data)");
+        assert!(
+            lsr & LSR_DR == 0,
+            "data-ready bit must be clear (no RX data)"
+        );
     }
 
     #[test]
@@ -304,7 +324,10 @@ mod tests {
         assert_eq!(ch, b'X');
 
         let lsr = uart.read8(REG_LSR).unwrap();
-        assert!(lsr & LSR_DR == 0, "data-ready must be clear after consuming");
+        assert!(
+            lsr & LSR_DR == 0,
+            "data-ready must be clear after consuming"
+        );
     }
 
     #[test]
@@ -342,11 +365,11 @@ mod tests {
         uart.write8(REG_LCR, LCR_DLAB).unwrap();
         // Write divisor latch registers
         uart.write8(REG_THR_RBR, 0x18).unwrap(); // DLL
-        uart.write8(REG_IER, 0x00).unwrap();      // DLM
-        // Read them back
+        uart.write8(REG_IER, 0x00).unwrap(); // DLM
+                                             // Read them back
         assert_eq!(uart.read8(REG_THR_RBR).unwrap(), 0x18); // DLL
-        assert_eq!(uart.read8(REG_IER).unwrap(), 0x00);      // DLM
-        // Nothing should have been sent to the sink
+        assert_eq!(uart.read8(REG_IER).unwrap(), 0x00); // DLM
+                                                        // Nothing should have been sent to the sink
         assert!(buf.lock().unwrap().is_empty());
         // Clear DLAB — IER should still be 0 (not corrupted by DLM write)
         uart.write8(REG_LCR, 0x03).unwrap();

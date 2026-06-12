@@ -1,17 +1,16 @@
 use crate::csr::{
-    CsrFile, CSR_MCAUSE, CSR_MCOUNTINHIBIT, CSR_MEPC, CSR_MIDELEG, CSR_MIE, CSR_MIP, CSR_MSTATUS,
-    CSR_MTVAL, CSR_MTVEC, CSR_MEDELEG, CSR_SCAUSE, CSR_SEPC, CSR_STVAL, CSR_STVEC,
-    MCOUNTINHIBIT_CY, MCOUNTINHIBIT_IR,
-    MIP_MEIP_BIT, MIP_MSIP_BIT, MIP_MTIP_BIT, MIP_SEIP_BIT, MIP_SSIP_BIT, MIP_STIP_BIT,
-    MIP_SW_WRITABLE_PUB,
-    MSTATUS_MIE_BIT, MSTATUS_MIE, MSTATUS_MPIE_BIT, MSTATUS_MPP_MASK, MSTATUS_MPP_SHIFT,
-    MSTATUS_SIE_BIT, MSTATUS_SIE, MSTATUS_SPIE_BIT, MSTATUS_SPP_BIT,
+    CsrFile, CSR_MCAUSE, CSR_MCOUNTINHIBIT, CSR_MEDELEG, CSR_MEPC, CSR_MIDELEG, CSR_MIE, CSR_MIP,
+    CSR_MSTATUS, CSR_MTVAL, CSR_MTVEC, CSR_SCAUSE, CSR_SEPC, CSR_STVAL, CSR_STVEC,
+    MCOUNTINHIBIT_CY, MCOUNTINHIBIT_IR, MIP_MEIP_BIT, MIP_MSIP_BIT, MIP_MTIP_BIT, MIP_SEIP_BIT,
+    MIP_SSIP_BIT, MIP_STIP_BIT, MIP_SW_WRITABLE_PUB, MSTATUS_MIE, MSTATUS_MIE_BIT,
+    MSTATUS_MPIE_BIT, MSTATUS_MPP_MASK, MSTATUS_MPP_SHIFT, MSTATUS_SIE, MSTATUS_SIE_BIT,
+    MSTATUS_SPIE_BIT, MSTATUS_SPP_BIT,
 };
 use crate::decode::{decode, expand_compressed};
 use crate::execute::execute;
 use crate::mem::Memory;
 use crate::mmu::{translate, AccessType};
-use crate::reg::{RegFile, FpRegFile};
+use crate::reg::{FpRegFile, RegFile};
 use crate::trap::{Trap, TrapInfo};
 
 /// Privilege levels
@@ -59,7 +58,12 @@ impl Hart {
     }
 
     /// Translate `va` with the given access type. Page-fault errors carry the VA as `tval`.
-    pub fn translate<M: Memory>(&self, mem: &M, va: u32, access: AccessType) -> Result<u32, TrapInfo> {
+    pub fn translate<M: Memory>(
+        &self,
+        mem: &M,
+        va: u32,
+        access: AccessType,
+    ) -> Result<u32, TrapInfo> {
         translate(self, mem, va, access)
     }
 
@@ -191,15 +195,19 @@ impl Hart {
         // Enable rules:
         //   M-mode delivery: priv < M, or (priv == M and MIE=1).
         //   S-mode delivery: priv < S, or (priv == S and SIE=1).
-        let m_enabled = self.priv_mode < PRIV_M
-            || (self.priv_mode == PRIV_M && (mstatus & MSTATUS_MIE) != 0);
-        let s_enabled = self.priv_mode < PRIV_S
-            || (self.priv_mode == PRIV_S && (mstatus & MSTATUS_SIE) != 0);
+        let m_enabled =
+            self.priv_mode < PRIV_M || (self.priv_mode == PRIV_M && (mstatus & MSTATUS_MIE) != 0);
+        let s_enabled =
+            self.priv_mode < PRIV_S || (self.priv_mode == PRIV_S && (mstatus & MSTATUS_SIE) != 0);
 
         // Priority order per privileged spec: MEI, MSI, MTI, SEI, SSI, STI.
         let order = [
-            MIP_MEIP_BIT, MIP_MSIP_BIT, MIP_MTIP_BIT,
-            MIP_SEIP_BIT, MIP_SSIP_BIT, MIP_STIP_BIT,
+            MIP_MEIP_BIT,
+            MIP_MSIP_BIT,
+            MIP_MTIP_BIT,
+            MIP_SEIP_BIT,
+            MIP_SSIP_BIT,
+            MIP_STIP_BIT,
         ];
         for bit in order {
             let mask = 1 << bit;
@@ -236,8 +244,11 @@ impl Hart {
             self.csrs.write_raw(CSR_SCAUSE, cause);
             self.csrs.write_raw(CSR_STVAL, tval);
             self.csrs.mstatus_trap_enter(
-                self.priv_mode, MSTATUS_SIE_BIT, MSTATUS_SPIE_BIT,
-                MSTATUS_SPP_BIT, 1 << MSTATUS_SPP_BIT,
+                self.priv_mode,
+                MSTATUS_SIE_BIT,
+                MSTATUS_SPIE_BIT,
+                MSTATUS_SPP_BIT,
+                1 << MSTATUS_SPP_BIT,
             );
             self.priv_mode = PRIV_S;
             self.pc = trap_target(self.csrs.read_raw(CSR_STVEC), info);
@@ -246,14 +257,16 @@ impl Hart {
             self.csrs.write_raw(CSR_MCAUSE, cause);
             self.csrs.write_raw(CSR_MTVAL, tval);
             self.csrs.mstatus_trap_enter(
-                self.priv_mode, MSTATUS_MIE_BIT, MSTATUS_MPIE_BIT,
-                MSTATUS_MPP_SHIFT, MSTATUS_MPP_MASK,
+                self.priv_mode,
+                MSTATUS_MIE_BIT,
+                MSTATUS_MPIE_BIT,
+                MSTATUS_MPP_SHIFT,
+                MSTATUS_MPP_MASK,
             );
             self.priv_mode = PRIV_M;
             self.pc = trap_target(self.csrs.read_raw(CSR_MTVEC), info);
         }
     }
-
 }
 
 /// Compute the trap entry PC from xtvec. MODE=0 (direct) sends everything to BASE;

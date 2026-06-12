@@ -49,6 +49,18 @@ Cargo workspace with three crates:
 - **CSR file** uses `HashMap<u16, u32>`. `cycle`/`instret` CSRs are computed from `Hart` counters on read. Unknown CSR access raises `IllegalInstruction`.
 - **tohost protocol** — riscv-tests signal completion by writing to a `tohost` memory address. Value 1 = pass, otherwise `(test_num << 1) | 1` = fail.
 
+## Pre-Commit Checklist
+
+Before committing any code change, always run these three checks and fix any issues:
+
+```bash
+cargo fmt -- --check    # Format — run without --check to auto-fix
+cargo clippy            # Lint warnings
+cargo test              # Unit tests must pass
+```
+
+If `cargo fmt -- --check` reports diffs, run `cargo fmt` to apply formatting, then re-check. Clippy warnings and test failures must be resolved before the commit.
+
 ## Roadmap (not yet implemented)
 
 M extension → A extension → C extension → F/D extensions → S/U privilege modes → Sv32 MMU → Bus → UART/CLINT/PLIC → OpenSBI → Linux boot.

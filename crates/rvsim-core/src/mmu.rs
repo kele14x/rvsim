@@ -9,7 +9,10 @@
 //! fault handler is written.
 
 use crate::cpu::{Hart, PRIV_M};
-use crate::csr::{CSR_MSTATUS, CSR_SATP, MSTATUS_MPP_MASK, MSTATUS_MPP_SHIFT, MSTATUS_MPRV, MSTATUS_MXR, MSTATUS_SUM};
+use crate::csr::{
+    CSR_MSTATUS, CSR_SATP, MSTATUS_MPP_MASK, MSTATUS_MPP_SHIFT, MSTATUS_MPRV, MSTATUS_MXR,
+    MSTATUS_SUM,
+};
 use crate::mem::Memory;
 use crate::pmp;
 use crate::trap::{Trap, TrapInfo};
@@ -55,7 +58,12 @@ const LEVELS: i32 = 2;
 ///
 /// Returns `Err(page_fault_on_va)` on any failure. The error's `tval` is always
 /// the original virtual address (per Privileged spec).
-pub fn translate<M: Memory>(hart: &Hart, mem: &M, va: u32, access: AccessType) -> Result<u32, TrapInfo> {
+pub fn translate<M: Memory>(
+    hart: &Hart,
+    mem: &M,
+    va: u32,
+    access: AccessType,
+) -> Result<u32, TrapInfo> {
     let mstatus = hart.csrs.read_raw(CSR_MSTATUS);
 
     // Effective privilege: fetches always use current priv; loads/stores in
@@ -202,7 +210,10 @@ mod tests {
     }
     impl Memory for VecMem {
         fn read8(&self, addr: u32) -> Result<u8, Trap> {
-            self.0.get(addr as usize).copied().ok_or(Trap::LoadAccessFault)
+            self.0
+                .get(addr as usize)
+                .copied()
+                .ok_or(Trap::LoadAccessFault)
         }
         fn read16(&self, addr: u32) -> Result<u16, Trap> {
             let a = addr as usize;
@@ -216,10 +227,18 @@ mod tests {
             if a + 4 > self.0.len() {
                 return Err(Trap::LoadAccessFault);
             }
-            Ok(u32::from_le_bytes([self.0[a], self.0[a + 1], self.0[a + 2], self.0[a + 3]]))
+            Ok(u32::from_le_bytes([
+                self.0[a],
+                self.0[a + 1],
+                self.0[a + 2],
+                self.0[a + 3],
+            ]))
         }
         fn write8(&mut self, addr: u32, val: u8) -> Result<(), Trap> {
-            *self.0.get_mut(addr as usize).ok_or(Trap::StoreAccessFault)? = val;
+            *self
+                .0
+                .get_mut(addr as usize)
+                .ok_or(Trap::StoreAccessFault)? = val;
             Ok(())
         }
         fn write16(&mut self, addr: u32, val: u16) -> Result<(), Trap> {
@@ -264,7 +283,7 @@ mod tests {
         let mut mem = VecMem::new(0x10000);
         let leaf = pte(0x3, PTE_V | PTE_A | PTE_D | perms | PTE_U); // PPN = 3 → PA 0x3000
         let inner = pte(0x2, PTE_V); // points at second-level at PA 0x2000
-        // Root PTE at index 0 of root table (covers VA 0..4 MiB)
+                                     // Root PTE at index 0 of root table (covers VA 0..4 MiB)
         mem.write32(0x1000, inner).unwrap();
         // Second-level PTE at index 3 (covers VA 0x3000..0x4000)
         mem.write32(0x2000 + 3 * 4, leaf).unwrap();
@@ -281,9 +300,18 @@ mod tests {
     fn translate_u_mode_4k_page() {
         let (hart, mem) = setup_one_page(PTE_R | PTE_W | PTE_X);
         // VA 0x3000 → PA 0x3000 (identity).
-        assert_eq!(translate(&hart, &mem, 0x3000, AccessType::Load).unwrap(), 0x3000);
-        assert_eq!(translate(&hart, &mem, 0x3abc, AccessType::Store).unwrap(), 0x3abc);
-        assert_eq!(translate(&hart, &mem, 0x3fff, AccessType::Fetch).unwrap(), 0x3fff);
+        assert_eq!(
+            translate(&hart, &mem, 0x3000, AccessType::Load).unwrap(),
+            0x3000
+        );
+        assert_eq!(
+            translate(&hart, &mem, 0x3abc, AccessType::Store).unwrap(),
+            0x3abc
+        );
+        assert_eq!(
+            translate(&hart, &mem, 0x3fff, AccessType::Fetch).unwrap(),
+            0x3fff
+        );
     }
 
     #[test]
@@ -351,7 +379,10 @@ mod tests {
         let (mut hart, mem) = setup_one_page(0);
         hart.priv_mode = PRIV_M;
         // satp set but M-mode → identity, regardless of perms.
-        assert_eq!(translate(&hart, &mem, 0x1234, AccessType::Load).unwrap(), 0x1234);
+        assert_eq!(
+            translate(&hart, &mem, 0x1234, AccessType::Load).unwrap(),
+            0x1234
+        );
     }
 
     #[test]
@@ -362,7 +393,10 @@ mod tests {
         // satp.MODE = 0 (Bare) → identity even in U-mode.
         hart.csrs.write_raw(CSR_SATP, 0);
         permissive_pmp(&mut hart);
-        assert_eq!(translate(&hart, &mem, 0xdead_beef, AccessType::Load).unwrap(), 0xdead_beef);
+        assert_eq!(
+            translate(&hart, &mem, 0xdead_beef, AccessType::Load).unwrap(),
+            0xdead_beef
+        );
     }
 
     #[test]
@@ -378,14 +412,20 @@ mod tests {
         hart.csrs.write_raw(CSR_SATP, (1 << 31) | 0x1);
         permissive_pmp(&mut hart);
         // VA 0x0000_1234 → PA 0x1000_1234 (low 22 bits passed through from VA).
-        assert_eq!(translate(&hart, &mem, 0x1234, AccessType::Load).unwrap(), 0x1000_1234);
+        assert_eq!(
+            translate(&hart, &mem, 0x1234, AccessType::Load).unwrap(),
+            0x1000_1234
+        );
     }
 
     #[test]
     fn translate_misaligned_megapage_faults() {
         let mut mem = VecMem::new(0x10000);
         // ppn1=0x40, ppn0=1 (non-zero!) → misaligned megapage.
-        let leaf = pte((0x40 << 10) | 1, PTE_V | PTE_A | PTE_D | PTE_R | PTE_W | PTE_U);
+        let leaf = pte(
+            (0x40 << 10) | 1,
+            PTE_V | PTE_A | PTE_D | PTE_R | PTE_W | PTE_U,
+        );
         mem.write32(0x1000, leaf).unwrap();
         let mut hart = Hart::new(0);
         hart.priv_mode = PRIV_U;

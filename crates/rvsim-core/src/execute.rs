@@ -1,11 +1,9 @@
-use crate::cpu::{Hart, COUNTER_WRITTEN_CYCLE, COUNTER_WRITTEN_INSTRET, PRIV_M, PRIV_U, PRIV_S};
+use crate::cpu::{Hart, COUNTER_WRITTEN_CYCLE, COUNTER_WRITTEN_INSTRET, PRIV_M, PRIV_S, PRIV_U};
 use crate::csr::{
     CSR_FCSR, CSR_MCYCLE, CSR_MCYCLEH, CSR_MEPC, CSR_MINSTRET, CSR_MINSTRETH, CSR_MSTATUS,
-    CSR_SATP, CSR_SEPC,
-    MSTATUS_SIE_BIT, MSTATUS_MIE_BIT, MSTATUS_SPIE_BIT, MSTATUS_MPIE_BIT,
-    MSTATUS_SPP_BIT, MSTATUS_MPP_SHIFT, MSTATUS_MPP_MASK,
+    CSR_SATP, CSR_SEPC, MSTATUS_FS_DIRTY, MSTATUS_FS_MASK, MSTATUS_MIE_BIT, MSTATUS_MPIE_BIT,
+    MSTATUS_MPP_MASK, MSTATUS_MPP_SHIFT, MSTATUS_SIE_BIT, MSTATUS_SPIE_BIT, MSTATUS_SPP_BIT,
     MSTATUS_TSR, MSTATUS_TVM, MSTATUS_TW,
-    MSTATUS_FS_MASK, MSTATUS_FS_DIRTY,
 };
 use crate::decode::Instruction;
 use crate::mem::Memory;
@@ -21,14 +19,15 @@ pub fn execute<M: Memory>(
     inst: Instruction,
     pc: u32,
 ) -> Result<(), TrapInfo> {
-
     match inst {
         // R-type arithmetic
         Instruction::Add { rd, rs1, rs2 } => {
-            hart.regs.set(rd, hart.regs.get(rs1).wrapping_add(hart.regs.get(rs2)));
+            hart.regs
+                .set(rd, hart.regs.get(rs1).wrapping_add(hart.regs.get(rs2)));
         }
         Instruction::Sub { rd, rs1, rs2 } => {
-            hart.regs.set(rd, hart.regs.get(rs1).wrapping_sub(hart.regs.get(rs2)));
+            hart.regs
+                .set(rd, hart.regs.get(rs1).wrapping_sub(hart.regs.get(rs2)));
         }
         Instruction::Sll { rd, rs1, rs2 } => {
             let shamt = hart.regs.get(rs2) & 0x1F;
@@ -43,7 +42,11 @@ pub fn execute<M: Memory>(
             hart.regs.set(rd, val);
         }
         Instruction::Sltu { rd, rs1, rs2 } => {
-            let val = if hart.regs.get(rs1) < hart.regs.get(rs2) { 1 } else { 0 };
+            let val = if hart.regs.get(rs1) < hart.regs.get(rs2) {
+                1
+            } else {
+                0
+            };
             hart.regs.set(rd, val);
         }
         Instruction::Xor { rd, rs1, rs2 } => {
@@ -55,7 +58,8 @@ pub fn execute<M: Memory>(
         }
         Instruction::Sra { rd, rs1, rs2 } => {
             let shamt = hart.regs.get(rs2) & 0x1F;
-            hart.regs.set(rd, ((hart.regs.get(rs1) as i32) >> shamt) as u32);
+            hart.regs
+                .set(rd, ((hart.regs.get(rs1) as i32) >> shamt) as u32);
         }
         Instruction::Or { rd, rs1, rs2 } => {
             hart.regs.set(rd, hart.regs.get(rs1) | hart.regs.get(rs2));
@@ -125,7 +129,11 @@ pub fn execute<M: Memory>(
             let va = hart.regs.get(rs1);
             let rs2v = hart.regs.get(rs2);
             let old = amo_load_store(hart, mem, va, |old| {
-                if (old as i32) < (rs2v as i32) { old } else { rs2v }
+                if (old as i32) < (rs2v as i32) {
+                    old
+                } else {
+                    rs2v
+                }
             })?;
             hart.regs.set(rd, old);
         }
@@ -133,30 +141,31 @@ pub fn execute<M: Memory>(
             let va = hart.regs.get(rs1);
             let rs2v = hart.regs.get(rs2);
             let old = amo_load_store(hart, mem, va, |old| {
-                if (old as i32) > (rs2v as i32) { old } else { rs2v }
+                if (old as i32) > (rs2v as i32) {
+                    old
+                } else {
+                    rs2v
+                }
             })?;
             hart.regs.set(rd, old);
         }
         Instruction::AmominuW { rd, rs1, rs2 } => {
             let va = hart.regs.get(rs1);
             let rs2v = hart.regs.get(rs2);
-            let old = amo_load_store(hart, mem, va, |old| {
-                if old < rs2v { old } else { rs2v }
-            })?;
+            let old = amo_load_store(hart, mem, va, |old| if old < rs2v { old } else { rs2v })?;
             hart.regs.set(rd, old);
         }
         Instruction::AmomaxuW { rd, rs1, rs2 } => {
             let va = hart.regs.get(rs1);
             let rs2v = hart.regs.get(rs2);
-            let old = amo_load_store(hart, mem, va, |old| {
-                if old > rs2v { old } else { rs2v }
-            })?;
+            let old = amo_load_store(hart, mem, va, |old| if old > rs2v { old } else { rs2v })?;
             hart.regs.set(rd, old);
         }
 
         // M extension
         Instruction::Mul { rd, rs1, rs2 } => {
-            hart.regs.set(rd, hart.regs.get(rs1).wrapping_mul(hart.regs.get(rs2)));
+            hart.regs
+                .set(rd, hart.regs.get(rs1).wrapping_mul(hart.regs.get(rs2)));
         }
         Instruction::Mulh { rd, rs1, rs2 } => {
             let a = hart.regs.get(rs1) as i32 as i64;
@@ -212,15 +221,24 @@ pub fn execute<M: Memory>(
 
         // I-type arithmetic
         Instruction::Addi { rd, rs1, imm } => {
-            hart.regs.set(rd, hart.regs.get(rs1).wrapping_add(imm as u32));
+            hart.regs
+                .set(rd, hart.regs.get(rs1).wrapping_add(imm as u32));
         }
         Instruction::Slti { rd, rs1, imm } => {
-            let val = if (hart.regs.get(rs1) as i32) < imm { 1 } else { 0 };
+            let val = if (hart.regs.get(rs1) as i32) < imm {
+                1
+            } else {
+                0
+            };
             hart.regs.set(rd, val);
         }
         Instruction::Sltiu { rd, rs1, imm } => {
             // imm is sign-extended, then compared as unsigned
-            let val = if hart.regs.get(rs1) < (imm as u32) { 1 } else { 0 };
+            let val = if hart.regs.get(rs1) < (imm as u32) {
+                1
+            } else {
+                0
+            };
             hart.regs.set(rd, val);
         }
         Instruction::Xori { rd, rs1, imm } => {
@@ -239,7 +257,8 @@ pub fn execute<M: Memory>(
             hart.regs.set(rd, hart.regs.get(rs1) >> shamt);
         }
         Instruction::Srai { rd, rs1, shamt } => {
-            hart.regs.set(rd, ((hart.regs.get(rs1) as i32) >> shamt) as u32);
+            hart.regs
+                .set(rd, ((hart.regs.get(rs1) as i32) >> shamt) as u32);
         }
 
         // Loads — translate, read, then write rd (no rd update on fault).
@@ -368,7 +387,8 @@ pub fn execute<M: Memory>(
                 PRIV_U => Trap::EnvironmentCallFromUMode,
                 PRIV_S => Trap::EnvironmentCallFromSMode,
                 _ => Trap::EnvironmentCallFromMMode,
-            }.into());
+            }
+            .into());
         }
         Instruction::Ebreak => {
             return Err(Trap::Breakpoint.into());
@@ -379,22 +399,25 @@ pub fn execute<M: Memory>(
             }
             hart.pc = hart.csrs.read_raw(CSR_MEPC);
             hart.priv_mode = hart.csrs.mstatus_trap_return(
-                MSTATUS_MIE_BIT, MSTATUS_MPIE_BIT,
-                MSTATUS_MPP_SHIFT, MSTATUS_MPP_MASK,
+                MSTATUS_MIE_BIT,
+                MSTATUS_MPIE_BIT,
+                MSTATUS_MPP_SHIFT,
+                MSTATUS_MPP_MASK,
             );
         }
         Instruction::Sret => {
             // SRET requires at least S; mstatus.TSR=1 traps SRET in S-mode.
             let mstatus = hart.csrs.read_raw(CSR_MSTATUS);
-            if hart.priv_mode < PRIV_S
-                || (hart.priv_mode == PRIV_S && (mstatus & MSTATUS_TSR) != 0)
+            if hart.priv_mode < PRIV_S || (hart.priv_mode == PRIV_S && (mstatus & MSTATUS_TSR) != 0)
             {
                 return Err(Trap::IllegalInstruction.into());
             }
             hart.pc = hart.csrs.read_raw(CSR_SEPC);
             hart.priv_mode = hart.csrs.mstatus_trap_return(
-                MSTATUS_SIE_BIT, MSTATUS_SPIE_BIT,
-                MSTATUS_SPP_BIT, 1 << MSTATUS_SPP_BIT,
+                MSTATUS_SIE_BIT,
+                MSTATUS_SPIE_BIT,
+                MSTATUS_SPP_BIT,
+                1 << MSTATUS_SPP_BIT,
             );
         }
         Instruction::SfenceVma => {
@@ -485,7 +508,13 @@ pub fn execute<M: Memory>(
         }
 
         // F extension — fused multiply-add
-        Instruction::FmaddS { rd, rs1, rs2, rs3, rm } => {
+        Instruction::FmaddS {
+            rd,
+            rs1,
+            rs2,
+            rs3,
+            rm,
+        } => {
             check_fs(hart)?;
             resolve_rm(hart, rm)?;
             let a = f32::from_bits(hart.fregs.get_f32(rs1));
@@ -496,7 +525,13 @@ pub fn execute<M: Memory>(
             accrue_flags(hart, flags);
             mark_fs_dirty(hart);
         }
-        Instruction::FmsubS { rd, rs1, rs2, rs3, rm } => {
+        Instruction::FmsubS {
+            rd,
+            rs1,
+            rs2,
+            rs3,
+            rm,
+        } => {
             check_fs(hart)?;
             resolve_rm(hart, rm)?;
             let a = f32::from_bits(hart.fregs.get_f32(rs1));
@@ -507,7 +542,13 @@ pub fn execute<M: Memory>(
             accrue_flags(hart, flags);
             mark_fs_dirty(hart);
         }
-        Instruction::FnmsubS { rd, rs1, rs2, rs3, rm } => {
+        Instruction::FnmsubS {
+            rd,
+            rs1,
+            rs2,
+            rs3,
+            rm,
+        } => {
             check_fs(hart)?;
             resolve_rm(hart, rm)?;
             let a = f32::from_bits(hart.fregs.get_f32(rs1));
@@ -518,7 +559,13 @@ pub fn execute<M: Memory>(
             accrue_flags(hart, flags);
             mark_fs_dirty(hart);
         }
-        Instruction::FnmaddS { rd, rs1, rs2, rs3, rm } => {
+        Instruction::FnmaddS {
+            rd,
+            rs1,
+            rs2,
+            rs3,
+            rm,
+        } => {
             check_fs(hart)?;
             resolve_rm(hart, rm)?;
             let a = f32::from_bits(hart.fregs.get_f32(rs1));
@@ -535,14 +582,16 @@ pub fn execute<M: Memory>(
             check_fs(hart)?;
             let a = hart.fregs.get_f32(rs1);
             let b = hart.fregs.get_f32(rs2);
-            hart.fregs.set_f32(rd, (a & 0x7FFF_FFFF) | (b & 0x8000_0000));
+            hart.fregs
+                .set_f32(rd, (a & 0x7FFF_FFFF) | (b & 0x8000_0000));
             mark_fs_dirty(hart);
         }
         Instruction::FsgnjnS { rd, rs1, rs2 } => {
             check_fs(hart)?;
             let a = hart.fregs.get_f32(rs1);
             let b = hart.fregs.get_f32(rs2);
-            hart.fregs.set_f32(rd, (a & 0x7FFF_FFFF) | (!b & 0x8000_0000));
+            hart.fregs
+                .set_f32(rd, (a & 0x7FFF_FFFF) | (!b & 0x8000_0000));
             mark_fs_dirty(hart);
         }
         Instruction::FsgnjxS { rd, rs1, rs2 } => {
@@ -559,7 +608,9 @@ pub fn execute<M: Memory>(
             let a = f32::from_bits(hart.fregs.get_f32(rs1));
             let b = f32::from_bits(hart.fregs.get_f32(rs2));
             let mut flags = 0u32;
-            if is_snan_f32(a) || is_snan_f32(b) { flags |= NV; }
+            if is_snan_f32(a) || is_snan_f32(b) {
+                flags |= NV;
+            }
             let r = if a.is_nan() && b.is_nan() {
                 f32::from_bits(0x7FC0_0000) // canonical NaN
             } else if a.is_nan() {
@@ -568,8 +619,16 @@ pub fn execute<M: Memory>(
                 a
             } else if a == 0.0 && b == 0.0 {
                 // -0 < +0
-                if a.is_sign_negative() { a } else { b }
-            } else if a < b { a } else { b };
+                if a.is_sign_negative() {
+                    a
+                } else {
+                    b
+                }
+            } else if a < b {
+                a
+            } else {
+                b
+            };
             hart.fregs.set_f32(rd, r.to_bits());
             accrue_flags(hart, flags);
             mark_fs_dirty(hart);
@@ -579,7 +638,9 @@ pub fn execute<M: Memory>(
             let a = f32::from_bits(hart.fregs.get_f32(rs1));
             let b = f32::from_bits(hart.fregs.get_f32(rs2));
             let mut flags = 0u32;
-            if is_snan_f32(a) || is_snan_f32(b) { flags |= NV; }
+            if is_snan_f32(a) || is_snan_f32(b) {
+                flags |= NV;
+            }
             let r = if a.is_nan() && b.is_nan() {
                 f32::from_bits(0x7FC0_0000)
             } else if a.is_nan() {
@@ -587,8 +648,16 @@ pub fn execute<M: Memory>(
             } else if b.is_nan() {
                 a
             } else if a == 0.0 && b == 0.0 {
-                if a.is_sign_positive() { a } else { b }
-            } else if a > b { a } else { b };
+                if a.is_sign_positive() {
+                    a
+                } else {
+                    b
+                }
+            } else if a > b {
+                a
+            } else {
+                b
+            };
             hart.fregs.set_f32(rd, r.to_bits());
             accrue_flags(hart, flags);
             mark_fs_dirty(hart);
@@ -600,8 +669,16 @@ pub fn execute<M: Memory>(
             let a = f32::from_bits(hart.fregs.get_f32(rs1));
             let b = f32::from_bits(hart.fregs.get_f32(rs2));
             let mut flags = 0u32;
-            if is_snan_f32(a) || is_snan_f32(b) { flags |= NV; }
-            let result = if a.is_nan() || b.is_nan() { 0u32 } else if a == b { 1 } else { 0 };
+            if is_snan_f32(a) || is_snan_f32(b) {
+                flags |= NV;
+            }
+            let result = if a.is_nan() || b.is_nan() {
+                0u32
+            } else if a == b {
+                1
+            } else {
+                0
+            };
             hart.regs.set(rd, result);
             accrue_flags(hart, flags);
         }
@@ -610,8 +687,16 @@ pub fn execute<M: Memory>(
             let a = f32::from_bits(hart.fregs.get_f32(rs1));
             let b = f32::from_bits(hart.fregs.get_f32(rs2));
             let mut flags = 0u32;
-            if a.is_nan() || b.is_nan() { flags |= NV; }
-            let result = if a.is_nan() || b.is_nan() { 0u32 } else if a < b { 1 } else { 0 };
+            if a.is_nan() || b.is_nan() {
+                flags |= NV;
+            }
+            let result = if a.is_nan() || b.is_nan() {
+                0u32
+            } else if a < b {
+                1
+            } else {
+                0
+            };
             hart.regs.set(rd, result);
             accrue_flags(hart, flags);
         }
@@ -620,8 +705,16 @@ pub fn execute<M: Memory>(
             let a = f32::from_bits(hart.fregs.get_f32(rs1));
             let b = f32::from_bits(hart.fregs.get_f32(rs2));
             let mut flags = 0u32;
-            if a.is_nan() || b.is_nan() { flags |= NV; }
-            let result = if a.is_nan() || b.is_nan() { 0u32 } else if a <= b { 1 } else { 0 };
+            if a.is_nan() || b.is_nan() {
+                flags |= NV;
+            }
+            let result = if a.is_nan() || b.is_nan() {
+                0u32
+            } else if a <= b {
+                1
+            } else {
+                0
+            };
             hart.regs.set(rd, result);
             accrue_flags(hart, flags);
         }
@@ -647,7 +740,9 @@ pub fn execute<M: Memory>(
                 i32::MIN as u32
             } else {
                 let i = a as i32;
-                if i as f32 != a { flags |= NX; }
+                if i as f32 != a {
+                    flags |= NX;
+                }
                 i as u32
             };
             hart.regs.set(rd, result);
@@ -669,7 +764,9 @@ pub fn execute<M: Memory>(
                 0u32
             } else {
                 let u = a as u32;
-                if u as f32 != a { flags |= NX; }
+                if u as f32 != a {
+                    flags |= NX;
+                }
                 u
             };
             hart.regs.set(rd, result);
@@ -683,7 +780,9 @@ pub fn execute<M: Memory>(
             let i = hart.regs.get(rs1) as i32;
             let r = i as f32;
             let mut flags = 0u32;
-            if r as i32 != i { flags |= NX; }
+            if r as i32 != i {
+                flags |= NX;
+            }
             hart.fregs.set_f32(rd, r.to_bits());
             accrue_flags(hart, flags);
             mark_fs_dirty(hart);
@@ -694,7 +793,9 @@ pub fn execute<M: Memory>(
             let u = hart.regs.get(rs1);
             let r = u as f32;
             let mut flags = 0u32;
-            if r as u32 != u { flags |= NX; }
+            if r as u32 != u {
+                flags |= NX;
+            }
             hart.fregs.set_f32(rd, r.to_bits());
             accrue_flags(hart, flags);
             mark_fs_dirty(hart);
@@ -718,7 +819,9 @@ pub fn execute<M: Memory>(
             let d = f64::from_bits(hart.fregs.get(rs1));
             let mut flags = 0u32;
             let rbits = if d.is_nan() {
-                if is_snan_f64(d) { flags |= NV; }
+                if is_snan_f64(d) {
+                    flags |= NV;
+                }
                 0x7FC0_0000u32 // canonical f32 qNaN
             } else {
                 let r = d as f32;
@@ -735,7 +838,9 @@ pub fn execute<M: Memory>(
             let s = f32::from_bits(hart.fregs.get_f32(rs1));
             let mut flags = 0u32;
             let rbits = if s.is_nan() {
-                if is_snan_f32(s) { flags |= NV; }
+                if is_snan_f32(s) {
+                    flags |= NV;
+                }
                 0x7FF8_0000_0000_0000u64 // canonical f64 qNaN
             } else {
                 (s as f64).to_bits()
@@ -811,7 +916,13 @@ pub fn execute<M: Memory>(
         }
 
         // D extension — fused multiply-add
-        Instruction::FmaddD { rd, rs1, rs2, rs3, rm } => {
+        Instruction::FmaddD {
+            rd,
+            rs1,
+            rs2,
+            rs3,
+            rm,
+        } => {
             check_fs(hart)?;
             resolve_rm(hart, rm)?;
             let a = f64::from_bits(hart.fregs.get(rs1));
@@ -822,7 +933,13 @@ pub fn execute<M: Memory>(
             accrue_flags(hart, flags);
             mark_fs_dirty(hart);
         }
-        Instruction::FmsubD { rd, rs1, rs2, rs3, rm } => {
+        Instruction::FmsubD {
+            rd,
+            rs1,
+            rs2,
+            rs3,
+            rm,
+        } => {
             check_fs(hart)?;
             resolve_rm(hart, rm)?;
             let a = f64::from_bits(hart.fregs.get(rs1));
@@ -833,7 +950,13 @@ pub fn execute<M: Memory>(
             accrue_flags(hart, flags);
             mark_fs_dirty(hart);
         }
-        Instruction::FnmsubD { rd, rs1, rs2, rs3, rm } => {
+        Instruction::FnmsubD {
+            rd,
+            rs1,
+            rs2,
+            rs3,
+            rm,
+        } => {
             check_fs(hart)?;
             resolve_rm(hart, rm)?;
             let a = f64::from_bits(hart.fregs.get(rs1));
@@ -844,7 +967,13 @@ pub fn execute<M: Memory>(
             accrue_flags(hart, flags);
             mark_fs_dirty(hart);
         }
-        Instruction::FnmaddD { rd, rs1, rs2, rs3, rm } => {
+        Instruction::FnmaddD {
+            rd,
+            rs1,
+            rs2,
+            rs3,
+            rm,
+        } => {
             check_fs(hart)?;
             resolve_rm(hart, rm)?;
             let a = f64::from_bits(hart.fregs.get(rs1));
@@ -861,14 +990,20 @@ pub fn execute<M: Memory>(
             check_fs(hart)?;
             let a = hart.fregs.get(rs1);
             let b = hart.fregs.get(rs2);
-            hart.fregs.set(rd, (a & 0x7FFF_FFFF_FFFF_FFFF) | (b & 0x8000_0000_0000_0000));
+            hart.fregs.set(
+                rd,
+                (a & 0x7FFF_FFFF_FFFF_FFFF) | (b & 0x8000_0000_0000_0000),
+            );
             mark_fs_dirty(hart);
         }
         Instruction::FsgnjnD { rd, rs1, rs2 } => {
             check_fs(hart)?;
             let a = hart.fregs.get(rs1);
             let b = hart.fregs.get(rs2);
-            hart.fregs.set(rd, (a & 0x7FFF_FFFF_FFFF_FFFF) | (!b & 0x8000_0000_0000_0000));
+            hart.fregs.set(
+                rd,
+                (a & 0x7FFF_FFFF_FFFF_FFFF) | (!b & 0x8000_0000_0000_0000),
+            );
             mark_fs_dirty(hart);
         }
         Instruction::FsgnjxD { rd, rs1, rs2 } => {
@@ -885,7 +1020,9 @@ pub fn execute<M: Memory>(
             let a = f64::from_bits(hart.fregs.get(rs1));
             let b = f64::from_bits(hart.fregs.get(rs2));
             let mut flags = 0u32;
-            if is_snan_f64(a) || is_snan_f64(b) { flags |= NV; }
+            if is_snan_f64(a) || is_snan_f64(b) {
+                flags |= NV;
+            }
             let r = if a.is_nan() && b.is_nan() {
                 f64::from_bits(0x7FF8_0000_0000_0000)
             } else if a.is_nan() {
@@ -893,8 +1030,16 @@ pub fn execute<M: Memory>(
             } else if b.is_nan() {
                 a
             } else if a == 0.0 && b == 0.0 {
-                if a.is_sign_negative() { a } else { b }
-            } else if a < b { a } else { b };
+                if a.is_sign_negative() {
+                    a
+                } else {
+                    b
+                }
+            } else if a < b {
+                a
+            } else {
+                b
+            };
             hart.fregs.set(rd, r.to_bits());
             accrue_flags(hart, flags);
             mark_fs_dirty(hart);
@@ -904,7 +1049,9 @@ pub fn execute<M: Memory>(
             let a = f64::from_bits(hart.fregs.get(rs1));
             let b = f64::from_bits(hart.fregs.get(rs2));
             let mut flags = 0u32;
-            if is_snan_f64(a) || is_snan_f64(b) { flags |= NV; }
+            if is_snan_f64(a) || is_snan_f64(b) {
+                flags |= NV;
+            }
             let r = if a.is_nan() && b.is_nan() {
                 f64::from_bits(0x7FF8_0000_0000_0000)
             } else if a.is_nan() {
@@ -912,8 +1059,16 @@ pub fn execute<M: Memory>(
             } else if b.is_nan() {
                 a
             } else if a == 0.0 && b == 0.0 {
-                if a.is_sign_positive() { a } else { b }
-            } else if a > b { a } else { b };
+                if a.is_sign_positive() {
+                    a
+                } else {
+                    b
+                }
+            } else if a > b {
+                a
+            } else {
+                b
+            };
             hart.fregs.set(rd, r.to_bits());
             accrue_flags(hart, flags);
             mark_fs_dirty(hart);
@@ -925,8 +1080,16 @@ pub fn execute<M: Memory>(
             let a = f64::from_bits(hart.fregs.get(rs1));
             let b = f64::from_bits(hart.fregs.get(rs2));
             let mut flags = 0u32;
-            if is_snan_f64(a) || is_snan_f64(b) { flags |= NV; }
-            let result = if a.is_nan() || b.is_nan() { 0u32 } else if a == b { 1 } else { 0 };
+            if is_snan_f64(a) || is_snan_f64(b) {
+                flags |= NV;
+            }
+            let result = if a.is_nan() || b.is_nan() {
+                0u32
+            } else if a == b {
+                1
+            } else {
+                0
+            };
             hart.regs.set(rd, result);
             accrue_flags(hart, flags);
         }
@@ -935,8 +1098,16 @@ pub fn execute<M: Memory>(
             let a = f64::from_bits(hart.fregs.get(rs1));
             let b = f64::from_bits(hart.fregs.get(rs2));
             let mut flags = 0u32;
-            if a.is_nan() || b.is_nan() { flags |= NV; }
-            let result = if a.is_nan() || b.is_nan() { 0u32 } else if a < b { 1 } else { 0 };
+            if a.is_nan() || b.is_nan() {
+                flags |= NV;
+            }
+            let result = if a.is_nan() || b.is_nan() {
+                0u32
+            } else if a < b {
+                1
+            } else {
+                0
+            };
             hart.regs.set(rd, result);
             accrue_flags(hart, flags);
         }
@@ -945,8 +1116,16 @@ pub fn execute<M: Memory>(
             let a = f64::from_bits(hart.fregs.get(rs1));
             let b = f64::from_bits(hart.fregs.get(rs2));
             let mut flags = 0u32;
-            if a.is_nan() || b.is_nan() { flags |= NV; }
-            let result = if a.is_nan() || b.is_nan() { 0u32 } else if a <= b { 1 } else { 0 };
+            if a.is_nan() || b.is_nan() {
+                flags |= NV;
+            }
+            let result = if a.is_nan() || b.is_nan() {
+                0u32
+            } else if a <= b {
+                1
+            } else {
+                0
+            };
             hart.regs.set(rd, result);
             accrue_flags(hart, flags);
         }
@@ -972,7 +1151,9 @@ pub fn execute<M: Memory>(
                 i32::MIN as u32
             } else {
                 let i = a as i32;
-                if i as f64 != a { flags |= NX; }
+                if i as f64 != a {
+                    flags |= NX;
+                }
                 i as u32
             };
             hart.regs.set(rd, result);
@@ -994,7 +1175,9 @@ pub fn execute<M: Memory>(
                 0u32
             } else {
                 let u = a as u32;
-                if u as f64 != a { flags |= NX; }
+                if u as f64 != a {
+                    flags |= NX;
+                }
                 u
             };
             hart.regs.set(rd, result);
@@ -1018,14 +1201,18 @@ pub fn execute<M: Memory>(
         // CSR instructions
         Instruction::Csrrw { rd, rs1, csr } => {
             tvm_check(hart, csr)?;
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
+            let old = hart
+                .csrs
+                .read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
             let val = hart.regs.get(rs1);
             csr_write(hart, csr, val)?;
             hart.regs.set(rd, old);
         }
         Instruction::Csrrs { rd, rs1, csr } => {
             tvm_check(hart, csr)?;
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
+            let old = hart
+                .csrs
+                .read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
             if rs1 != 0 {
                 csr_write(hart, csr, old | hart.regs.get(rs1))?;
             }
@@ -1033,7 +1220,9 @@ pub fn execute<M: Memory>(
         }
         Instruction::Csrrc { rd, rs1, csr } => {
             tvm_check(hart, csr)?;
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
+            let old = hart
+                .csrs
+                .read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
             if rs1 != 0 {
                 csr_write(hart, csr, old & !hart.regs.get(rs1))?;
             }
@@ -1041,13 +1230,17 @@ pub fn execute<M: Memory>(
         }
         Instruction::Csrrwi { rd, uimm, csr } => {
             tvm_check(hart, csr)?;
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
+            let old = hart
+                .csrs
+                .read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
             csr_write(hart, csr, uimm as u32)?;
             hart.regs.set(rd, old);
         }
         Instruction::Csrrsi { rd, uimm, csr } => {
             tvm_check(hart, csr)?;
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
+            let old = hart
+                .csrs
+                .read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
             if uimm != 0 {
                 csr_write(hart, csr, old | (uimm as u32))?;
             }
@@ -1055,7 +1248,9 @@ pub fn execute<M: Memory>(
         }
         Instruction::Csrrci { rd, uimm, csr } => {
             tvm_check(hart, csr)?;
-            let old = hart.csrs.read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
+            let old = hart
+                .csrs
+                .read(csr, hart.cycle, hart.instret, hart.mtime, hart.priv_mode)?;
             if uimm != 0 {
                 csr_write(hart, csr, old & !(uimm as u32))?;
             }
@@ -1113,7 +1308,8 @@ const NX: u32 = 1 << 0; // inexact
 
 fn mark_fs_dirty(hart: &mut Hart) {
     let ms = hart.csrs.read_raw(CSR_MSTATUS);
-    hart.csrs.write_raw(CSR_MSTATUS, (ms & !MSTATUS_FS_MASK) | MSTATUS_FS_DIRTY);
+    hart.csrs
+        .write_raw(CSR_MSTATUS, (ms & !MSTATUS_FS_MASK) | MSTATUS_FS_DIRTY);
 }
 
 fn check_fs(hart: &Hart) -> Result<(), TrapInfo> {
@@ -1144,20 +1340,26 @@ fn resolve_rm(hart: &Hart, rm: u8) -> Result<u8, TrapInfo> {
 
 fn is_snan_f32(v: f32) -> bool {
     let b = v.to_bits();
-    (b & 0x7F80_0000) == 0x7F80_0000
-        && (b & 0x007F_FFFF) != 0
-        && (b & 0x0040_0000) == 0
+    (b & 0x7F80_0000) == 0x7F80_0000 && (b & 0x007F_FFFF) != 0 && (b & 0x0040_0000) == 0
 }
 
 const CANONICAL_NAN_F32: f32 = f32::from_bits(0x7FC0_0000);
 const CANONICAL_NAN_F64: f64 = f64::from_bits(0x7FF8_0000_0000_0000);
 
 fn canonicalize_f32(v: f32) -> f32 {
-    if v.is_nan() { CANONICAL_NAN_F32 } else { v }
+    if v.is_nan() {
+        CANONICAL_NAN_F32
+    } else {
+        v
+    }
 }
 
 fn canonicalize_f64(v: f64) -> f64 {
-    if v.is_nan() { CANONICAL_NAN_F64 } else { v }
+    if v.is_nan() {
+        CANONICAL_NAN_F64
+    } else {
+        v
+    }
 }
 
 fn classify_f32(v: f32) -> u32 {
@@ -1168,7 +1370,11 @@ fn classify_f32(v: f32) -> u32 {
 
     if exp == 0xFF {
         if frac == 0 {
-            if sign != 0 { 1 << 0 } else { 1 << 7 } // ±inf
+            if sign != 0 {
+                1 << 0
+            } else {
+                1 << 7
+            } // ±inf
         } else if frac & 0x0040_0000 != 0 {
             1 << 9 // quiet NaN
         } else {
@@ -1176,7 +1382,11 @@ fn classify_f32(v: f32) -> u32 {
         }
     } else if exp == 0 {
         if frac == 0 {
-            if sign != 0 { 1 << 3 } else { 1 << 4 } // ±zero
+            if sign != 0 {
+                1 << 3
+            } else {
+                1 << 4
+            } // ±zero
         } else if sign != 0 {
             1 << 2 // negative subnormal
         } else {
@@ -1206,8 +1416,12 @@ fn inexact_flags(r: f32, exact: f64) -> u32 {
     if r.is_infinite() && exact.is_finite() {
         flags |= OF | NX;
     } else if r.is_finite() {
-        if r as f64 != exact { flags |= NX; }
-        if r.is_subnormal() && exact != 0.0 { flags |= UF; }
+        if r as f64 != exact {
+            flags |= NX;
+        }
+        if r.is_subnormal() && exact != 0.0 {
+            flags |= UF;
+        }
     }
     flags
 }
@@ -1247,7 +1461,11 @@ fn f32_div(a: f32, b: f32) -> (f32, u32) {
             flags |= NV;
         }
     } else if b == 0.0 && !a.is_nan() {
-        if a == 0.0 { flags |= NV; } else { flags |= DZ; }
+        if a == 0.0 {
+            flags |= NV;
+        } else {
+            flags |= DZ;
+        }
     } else if !r.is_nan() {
         flags |= inexact_flags(r, a as f64 / b as f64);
     }
@@ -1258,7 +1476,9 @@ fn f32_sqrt(a: f32) -> (f32, u32) {
     let r = canonicalize_f32(a.sqrt());
     let mut flags = 0u32;
     if a.is_nan() {
-        if is_snan_f32(a) { flags |= NV; }
+        if is_snan_f32(a) {
+            flags |= NV;
+        }
     } else if a.is_sign_negative() && a != 0.0 {
         flags |= NV;
     } else if !r.is_nan() && !r.is_infinite() {
@@ -1272,7 +1492,9 @@ fn f32_fma(a: f32, b: f32, c: f32) -> (f32, u32) {
     let r = canonicalize_f32(a.mul_add(b, c));
     let mut flags = 0u32;
     if r.is_nan() {
-        if is_snan_f32(a) || is_snan_f32(b) || is_snan_f32(c)
+        if is_snan_f32(a)
+            || is_snan_f32(b)
+            || is_snan_f32(c)
             || (!a.is_nan() && !b.is_nan() && !c.is_nan())
         {
             flags |= NV;
@@ -1299,7 +1521,11 @@ fn classify_f64(v: f64) -> u32 {
 
     if exp == 0x7FF {
         if frac == 0 {
-            if sign != 0 { 1 << 0 } else { 1 << 7 }
+            if sign != 0 {
+                1 << 0
+            } else {
+                1 << 7
+            }
         } else if frac & 0x0008_0000_0000_0000 != 0 {
             1 << 9
         } else {
@@ -1307,7 +1533,11 @@ fn classify_f64(v: f64) -> u32 {
         }
     } else if exp == 0 {
         if frac == 0 {
-            if sign != 0 { 1 << 3 } else { 1 << 4 }
+            if sign != 0 {
+                1 << 3
+            } else {
+                1 << 4
+            }
         } else if sign != 0 {
             1 << 2
         } else {
@@ -1332,10 +1562,12 @@ fn nan_check_2_f64(a: f64, b: f64, r: f64) -> u32 {
     }
 }
 
-
-
 fn f64_flags_finite(r: f64) -> u32 {
-    if r.is_subnormal() && r != 0.0 { UF } else { 0 }
+    if r.is_subnormal() && r != 0.0 {
+        UF
+    } else {
+        0
+    }
 }
 
 fn f64_add(a: f64, b: f64) -> (f64, u32) {
@@ -1346,7 +1578,9 @@ fn f64_add(a: f64, b: f64) -> (f64, u32) {
             flags |= OF | NX;
         } else if r.is_finite() {
             flags |= f64_flags_finite(r);
-            if (-r).mul_add(1.0, a) + b != 0.0 { flags |= NX; }
+            if (-r).mul_add(1.0, a) + b != 0.0 {
+                flags |= NX;
+            }
         }
     }
     (r, flags)
@@ -1360,7 +1594,9 @@ fn f64_sub(a: f64, b: f64) -> (f64, u32) {
             flags |= OF | NX;
         } else if r.is_finite() {
             flags |= f64_flags_finite(r);
-            if (-r).mul_add(1.0, a) - b != 0.0 { flags |= NX; }
+            if (-r).mul_add(1.0, a) - b != 0.0 {
+                flags |= NX;
+            }
         }
     }
     (r, flags)
@@ -1374,7 +1610,9 @@ fn f64_mul(a: f64, b: f64) -> (f64, u32) {
             flags |= OF | NX;
         } else if r.is_finite() {
             flags |= f64_flags_finite(r);
-            if a.mul_add(b, -r) != 0.0 { flags |= NX; }
+            if a.mul_add(b, -r) != 0.0 {
+                flags |= NX;
+            }
         }
     }
     (r, flags)
@@ -1388,12 +1626,18 @@ fn f64_div(a: f64, b: f64) -> (f64, u32) {
             flags |= NV;
         }
     } else if b == 0.0 && !a.is_nan() {
-        if a == 0.0 { flags |= NV; } else { flags |= DZ; }
+        if a == 0.0 {
+            flags |= NV;
+        } else {
+            flags |= DZ;
+        }
     } else if r.is_infinite() && a.is_finite() && b.is_finite() {
         flags |= OF | NX;
     } else if r.is_finite() {
         flags |= f64_flags_finite(r);
-        if r.mul_add(b, -a) != 0.0 { flags |= NX; }
+        if r.mul_add(b, -a) != 0.0 {
+            flags |= NX;
+        }
     }
     (r, flags)
 }
@@ -1402,12 +1646,16 @@ fn f64_sqrt(a: f64) -> (f64, u32) {
     let r = canonicalize_f64(a.sqrt());
     let mut flags = 0u32;
     if a.is_nan() {
-        if is_snan_f64(a) { flags |= NV; }
+        if is_snan_f64(a) {
+            flags |= NV;
+        }
     } else if a.is_sign_negative() && a != 0.0 {
         flags |= NV;
     } else if r.is_finite() {
         flags |= f64_flags_finite(r);
-        if r.mul_add(r, -a) != 0.0 { flags |= NX; }
+        if r.mul_add(r, -a) != 0.0 {
+            flags |= NX;
+        }
     }
     (r, flags)
 }
@@ -1416,7 +1664,9 @@ fn f64_fma(a: f64, b: f64, c: f64) -> (f64, u32) {
     let r = canonicalize_f64(a.mul_add(b, c));
     let mut flags = 0u32;
     if r.is_nan() {
-        if is_snan_f64(a) || is_snan_f64(b) || is_snan_f64(c)
+        if is_snan_f64(a)
+            || is_snan_f64(b)
+            || is_snan_f64(c)
             || (!a.is_nan() && !b.is_nan() && !c.is_nan())
         {
             flags |= NV;
@@ -1426,7 +1676,9 @@ fn f64_fma(a: f64, b: f64, c: f64) -> (f64, u32) {
     } else if r.is_finite() {
         flags |= f64_flags_finite(r);
         let residual = a.mul_add(b, -r) + c;
-        if residual != 0.0 { flags |= NX; }
+        if residual != 0.0 {
+            flags |= NX;
+        }
     }
     (r, flags)
 }

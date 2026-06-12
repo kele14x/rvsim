@@ -154,13 +154,13 @@ fn is_valid_csr(addr: u16) -> bool {
         CSR_MSCRATCH | CSR_MEPC | CSR_MCAUSE | CSR_MTVAL | CSR_MIP => true,
         CSR_MCYCLE | CSR_MINSTRET | CSR_MCYCLEH | CSR_MINSTRETH => true,
         CSR_PMPCFG0..=CSR_PMPCFG3 => true,
-        a if a >= CSR_PMPADDR0 && a < CSR_PMPADDR0 + PMP_NUM_ENTRIES as u16 => true,
+        a if (CSR_PMPADDR0..CSR_PMPADDR0 + PMP_NUM_ENTRIES as u16).contains(&a) => true,
         // mhpmevent3..31
-        a if a >= CSR_MHPMEVENT_BASE && a < CSR_MHPMEVENT_BASE + 29 => true,
+        a if (CSR_MHPMEVENT_BASE..CSR_MHPMEVENT_BASE + 29).contains(&a) => true,
         // mhpmcounter3..31
-        a if a >= CSR_MHPMCOUNTER_BASE && a < CSR_MHPMCOUNTER_BASE + 29 => true,
+        a if (CSR_MHPMCOUNTER_BASE..CSR_MHPMCOUNTER_BASE + 29).contains(&a) => true,
         // mhpmcounter3h..31h
-        a if a >= CSR_MHPMCOUNTERH_BASE && a < CSR_MHPMCOUNTERH_BASE + 29 => true,
+        a if (CSR_MHPMCOUNTERH_BASE..CSR_MHPMCOUNTERH_BASE + 29).contains(&a) => true,
         CSR_TSELECT | CSR_TDATA1 | CSR_TDATA2 | CSR_TCONTROL => true,
         CSR_MVENDORID | CSR_MARCHID | CSR_MIMPID | CSR_MHARTID | CSR_MCONFIGPTR => true,
         _ => false,
@@ -184,8 +184,7 @@ impl CsrFile {
         // S and U are required for OpenSBI: it probes misa to decide whether
         // to bring up an S-mode payload, and refuses to run the lottery /
         // coldboot path otherwise.
-        regs[CSR_MISA as usize] =
-            (1 << 30)   // MXL = 1 (32-bit)
+        regs[CSR_MISA as usize] = (1 << 30)   // MXL = 1 (32-bit)
                 | (1 << 20) // U
                 | (1 << 18) // S
                 | (1 << 12) // M
@@ -213,7 +212,14 @@ impl CsrFile {
         }
     }
 
-    pub fn read(&self, addr: u16, cycle: u64, instret: u64, mtime: u64, priv_mode: u8) -> Result<u32, Trap> {
+    pub fn read(
+        &self,
+        addr: u16,
+        cycle: u64,
+        instret: u64,
+        mtime: u64,
+        priv_mode: u8,
+    ) -> Result<u32, Trap> {
         if priv_mode < Self::min_priv(addr) {
             return Err(Trap::IllegalInstruction);
         }
@@ -267,37 +273,41 @@ impl CsrFile {
             return Err(Trap::IllegalInstruction);
         }
         match addr {
-            CSR_CYCLE | CSR_CYCLEH | CSR_INSTRET | CSR_INSTRETH => {
-                Err(Trap::IllegalInstruction)
-            }
+            CSR_CYCLE | CSR_CYCLEH | CSR_INSTRET | CSR_INSTRETH => Err(Trap::IllegalInstruction),
             CSR_MISA => Ok(()),
             CSR_FCSR => {
                 self.regs[CSR_FCSR as usize] = val & 0xFF;
                 Ok(())
             }
             CSR_FFLAGS => {
-                self.regs[CSR_FCSR as usize] = (self.regs[CSR_FCSR as usize] & !0x1F) | (val & 0x1F);
+                self.regs[CSR_FCSR as usize] =
+                    (self.regs[CSR_FCSR as usize] & !0x1F) | (val & 0x1F);
                 Ok(())
             }
             CSR_FRM => {
-                self.regs[CSR_FCSR as usize] = (self.regs[CSR_FCSR as usize] & !0xE0) | ((val & 0x7) << 5);
+                self.regs[CSR_FCSR as usize] =
+                    (self.regs[CSR_FCSR as usize] & !0xE0) | ((val & 0x7) << 5);
                 Ok(())
             }
             CSR_SSTATUS => {
-                self.regs[CSR_MSTATUS as usize] = (self.regs[CSR_MSTATUS as usize] & !SSTATUS_MASK) | (val & SSTATUS_MASK);
+                self.regs[CSR_MSTATUS as usize] =
+                    (self.regs[CSR_MSTATUS as usize] & !SSTATUS_MASK) | (val & SSTATUS_MASK);
                 Ok(())
             }
             CSR_SIE => {
-                self.regs[CSR_MIE as usize] = (self.regs[CSR_MIE as usize] & !SIE_SIP_MASK) | (val & SIE_SIP_MASK);
+                self.regs[CSR_MIE as usize] =
+                    (self.regs[CSR_MIE as usize] & !SIE_SIP_MASK) | (val & SIE_SIP_MASK);
                 Ok(())
             }
             CSR_SIP => {
-                self.regs[CSR_MIP as usize] = (self.regs[CSR_MIP as usize] & !MIP_SSIP) | (val & MIP_SSIP);
+                self.regs[CSR_MIP as usize] =
+                    (self.regs[CSR_MIP as usize] & !MIP_SSIP) | (val & MIP_SSIP);
                 Ok(())
             }
             CSR_TSELECT | CSR_TDATA1 | CSR_TDATA2 | CSR_TCONTROL => Ok(()),
             CSR_MIP => {
-                self.regs[CSR_MIP as usize] = (self.regs[CSR_MIP as usize] & !MIP_SW_WRITABLE) | (val & MIP_SW_WRITABLE);
+                self.regs[CSR_MIP as usize] =
+                    (self.regs[CSR_MIP as usize] & !MIP_SW_WRITABLE) | (val & MIP_SW_WRITABLE);
                 Ok(())
             }
             _ if is_valid_csr(addr) => {
@@ -319,7 +329,14 @@ impl CsrFile {
     }
 
     /// Trap entry: save priv to xPP, copy xIE to xPIE, clear xIE.
-    pub fn mstatus_trap_enter(&mut self, prev_priv: u8, ie_bit: u32, pie_bit: u32, pp_shift: u32, pp_mask: u32) {
+    pub fn mstatus_trap_enter(
+        &mut self,
+        prev_priv: u8,
+        ie_bit: u32,
+        pie_bit: u32,
+        pp_shift: u32,
+        pp_mask: u32,
+    ) {
         let mut v = self.regs[CSR_MSTATUS as usize];
         v = (v & !pp_mask) | ((prev_priv as u32) << pp_shift);
         let ie = (v >> ie_bit) & 1;
@@ -331,7 +348,13 @@ impl CsrFile {
     /// Trap return: restore priv from xPP, copy xPIE to xIE, set xPIE=1, clear xPP.
     /// Also clears MPRV when returning to a mode less privileged than M
     /// (privileged spec 1.12+).
-    pub fn mstatus_trap_return(&mut self, ie_bit: u32, pie_bit: u32, pp_shift: u32, pp_mask: u32) -> u8 {
+    pub fn mstatus_trap_return(
+        &mut self,
+        ie_bit: u32,
+        pie_bit: u32,
+        pp_shift: u32,
+        pp_mask: u32,
+    ) -> u8 {
         let mut v = self.regs[CSR_MSTATUS as usize];
         let priv_mode = ((v >> pp_shift) & (pp_mask >> pp_shift)) as u8;
         let pie = (v >> pie_bit) & 1;

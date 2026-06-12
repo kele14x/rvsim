@@ -53,12 +53,18 @@ const INTERRUPT_BIT: u32 = 1 << 31;
 impl TrapInfo {
     /// Build an exception trap (bit 31 clear). Convenience: takes a `Trap` and tval.
     pub fn new(trap: Trap, tval: u32) -> Self {
-        Self { cause: trap.cause_code(), tval }
+        Self {
+            cause: trap.cause_code(),
+            tval,
+        }
     }
 
     /// Build an interrupt trap (bit 31 set). `code` is 0..31 (e.g. 7 for MTI).
     pub fn interrupt(code: u32) -> Self {
-        Self { cause: INTERRUPT_BIT | code, tval: 0 }
+        Self {
+            cause: INTERRUPT_BIT | code,
+            tval: 0,
+        }
     }
 
     pub fn is_interrupt(self) -> bool {
