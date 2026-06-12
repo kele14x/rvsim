@@ -6,7 +6,6 @@ use std::process;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use crossterm::terminal;
 use goblin::elf::{header, Elf};
 use rvsim_core::cpu::Hart;
 use rvsim_core::mem::Memory;
@@ -16,11 +15,33 @@ use rvsim_mem::flat::FlatMemory;
 use rvsim_mem::plic::Plic;
 use rvsim_mem::uart::Uart;
 
-struct RawModeGuard;
+struct TermiosGuard {
+    original: libc::termios,
+}
 
-impl Drop for RawModeGuard {
+impl Drop for TermiosGuard {
     fn drop(&mut self) {
-        let _ = terminal::disable_raw_mode();
+        unsafe {
+            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &self.original);
+        }
+    }
+}
+
+fn set_minimal_raw_mode() -> Option<TermiosGuard> {
+    unsafe {
+        let mut termios: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(libc::STDIN_FILENO, &mut termios) != 0 {
+            return None;
+        }
+        let original = termios;
+        // Disable canonical mode (line buffering) and echo, but keep:
+        // - ISIG: signal generation (Ctrl-C → SIGINT)
+        // - OPOST: output post-processing (\n → \r\n)
+        termios.c_lflag &= !(libc::ICANON | libc::ECHO);
+        if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) != 0 {
+            return None;
+        }
+        Some(TermiosGuard { original })
     }
 }
 
@@ -180,7 +201,10 @@ fn print_usage() {
 
 fn main() {
     let args = parse_args();
+    process::exit(run(args));
+}
 
+fn run(args: CliArgs) -> i32 {
     let elf_data = fs::read(&args.elf_path).unwrap_or_else(|e| {
         eprintln!("Failed to read {}: {}", args.elf_path, e);
         process::exit(1);
@@ -196,22 +220,18 @@ fn main() {
     let uart = Uart::new(Box::new(std::io::stdout()), rx_queue.clone());
     let mut bus = Bus::new(ram, Clint::new(), Plic::new(), uart);
 
-    let _raw_guard = if args.kernel_path.is_some() {
-        terminal::enable_raw_mode().ok();
+    let _termios_guard = if args.kernel_path.is_some() {
+        let guard = set_minimal_raw_mode();
         let rq = rx_queue.clone();
         thread::spawn(move || {
             let mut stdin = std::io::stdin().lock();
             let mut buf = [0u8; 1];
+            // With ISIG enabled, Ctrl-C generates SIGINT naturally — no manual check needed.
             while stdin.read(&mut buf).unwrap_or(0) > 0 {
-                if buf[0] == 0x03 {
-                    // Ctrl-C: restore terminal and exit
-                    let _ = terminal::disable_raw_mode();
-                    process::exit(0);
-                }
                 rq.lock().unwrap().push_back(buf[0]);
             }
         });
-        Some(RawModeGuard)
+        guard
     } else {
         None
     };
@@ -245,17 +265,20 @@ fn main() {
     // Load raw kernel image first (before DTB), so the DTB can overwrite
     // the tail of the kernel if they overlap in memory.
     if let Some(path) = &args.kernel_path {
-        let kernel = fs::read(path).unwrap_or_else(|e| {
-            eprintln!("Failed to read kernel {}: {}", path, e);
-            process::exit(1);
-        });
+        let kernel = match fs::read(path) {
+            Ok(k) => k,
+            Err(e) => {
+                eprintln!("Failed to read kernel {}: {}", path, e);
+                return 1;
+            }
+        };
         let end = (args.kernel_addr as u64).saturating_add(kernel.len() as u64);
         if args.kernel_addr < RAM_BASE || end > RAM_BASE as u64 + RAM_SIZE as u64 {
             eprintln!(
                 "Kernel does not fit in RAM: addr=0x{:08x} len=0x{:x} ram=[0x{:08x},0x{:08x})",
                 args.kernel_addr, kernel.len(), RAM_BASE, RAM_BASE as u64 + RAM_SIZE as u64
             );
-            process::exit(1);
+            return 1;
         }
         bus.ram.load(args.kernel_addr, &kernel);
         eprintln!("Loaded kernel ({} bytes) at 0x{:08x}", kernel.len(), args.kernel_addr);
@@ -263,17 +286,20 @@ fn main() {
 
     // DTB loaded after kernel so it wins if they overlap.
     let dtb_loaded_at: Option<u32> = if let Some(path) = &args.dtb_path {
-        let dtb = fs::read(path).unwrap_or_else(|e| {
-            eprintln!("Failed to read DTB {}: {}", path, e);
-            process::exit(1);
-        });
+        let dtb = match fs::read(path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Failed to read DTB {}: {}", path, e);
+                return 1;
+            }
+        };
         let end = (args.dtb_addr as u64).saturating_add(dtb.len() as u64);
         if args.dtb_addr < RAM_BASE || end > RAM_BASE as u64 + RAM_SIZE as u64 {
             eprintln!(
                 "DTB does not fit in RAM: addr=0x{:08x} len=0x{:x} ram=[0x{:08x},0x{:08x})",
                 args.dtb_addr, dtb.len(), RAM_BASE, RAM_BASE as u64 + RAM_SIZE as u64
             );
-            process::exit(1);
+            return 1;
         }
         bus.ram.load(args.dtb_addr, &dtb);
         Some(args.dtb_addr)
@@ -346,11 +372,11 @@ fn main() {
             if val != 0 {
                 if val == 1 {
                     println!("PASS");
-                    process::exit(0);
+                    return 0;
                 } else {
                     let test_num = val >> 1;
                     eprintln!("FAIL: test case {} (tohost=0x{:08x})", test_num, val);
-                    process::exit(1);
+                    return 1;
                 }
             }
         }
@@ -385,5 +411,5 @@ fn main() {
         }
     }
     eprintln!();
-    process::exit(1);
+    1
 }
