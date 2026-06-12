@@ -1,13 +1,13 @@
 [submodule "tests/riscv-tests"]
 	path = tests/riscv-tests
-	url = git@github.com:riscv-software-src/riscv-tests.git
+	url = https://github.com/riscv-software-src/riscv-tests.git
 [submodule "tests/linux"]
 	path = tests/linux
-	url = git@github.com:gregkh/linux.git
+	url = https://github.com/gregkh/linux.git
 	branch = linux-6.12.y
 [submodule "tests/opensbi"]
 	path = tests/opensbi
-	url = git@github.com:riscv-software-src/opensbi.git
+	url = https://github.com/riscv-software-src/opensbi.git
 	branch = release-1.8.x
 [submodule "tests/busybox"]
 	path = tests/busybox
@@ -15,5 +15,5 @@
 	branch = 1_37_stable
 [submodule "tests/buildroot"]
 	path = tests/buildroot
-	url = git@github.com:buildroot/buildroot.git
+	url = https://github.com/buildroot/buildroot.git
 	branch = 2025.02.x
