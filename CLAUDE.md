@@ -6,27 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 RISC-V simulator (RV32GC + Sv32 MMU) in Rust, targeting Linux boot. Implements the full RV32GC ISA (IMAFDC extensions + Zicsr + Zifencei), supervisor mode, and Sv32 virtual memory.
 
+## Guidelines
+
+- **Do not create git commits unless the user explicitly asks you to.** Make code changes freely, but leave staging and committing to the user's discretion.
+
 ## Build & Test Commands
 
 ```bash
 cargo build                  # Build all crates
 cargo test                   # Run unit tests (core + mem)
 cargo clippy                 # Lint
-cargo run -- <elf-binary>    # Run a RISC-V ELF binary
 ```
 
-Run all riscv-tests compliance tests:
-```bash
-for f in tests/riscv-tests-bin/rv32ui-p-*; do
-  result=$(cargo run --quiet -- "$f" 2>&1)
-  echo "$(basename $f): $result"
-done
-```
-
-Run a single riscv-test:
-```bash
-cargo run -- tests/riscv-tests-bin/rv32ui-p-add
-```
+For higher-level payloads (riscv-tests, OpenSBI, Linux, etc.), see **README.md**.
 
 Boot Linux:
 ```bash
@@ -73,3 +65,7 @@ If `cargo fmt -- --check` reports diffs, run `cargo fmt` to apply formatting, th
 ## Status
 
 RV32GC implementation is complete and boots Linux via OpenSBI. All ISA extensions (IMAFDC + Zicsr + Zifencei) are implemented and tested. Supervisor mode with Sv32 MMU enables full Linux operation including virtual memory, page faults, and user-space execution.
+
+### Possible future work
+
+RV64 (64-bit) support, hypervisor (H) extension, V extension, AIA (advanced interrupt architecture), virtio block/net, GDB stub, JIT/dynarec.
