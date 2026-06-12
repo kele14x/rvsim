@@ -13,19 +13,20 @@ OPENSBI_ELF        := tests/opensbi-bin/fw_jump.elf
 OPENSBI_DTB        := tests/device-tree-bin/rvsim.dtb
 LINUX_IMAGE        := tests/linux-bin/Image
 
-.PHONY: help build test clippy fmt check riscv-tests opensbi linux clean
+.PHONY: help build test clippy fmt check riscv-tests riscv-tests-clean opensbi linux clean
 
 help:
 	@echo "Targets:"
-	@echo "  build         Build all crates (debug)"
-	@echo "  test          Run unit tests"
-	@echo "  clippy        Lint with clippy"
-	@echo "  fmt           Format with rustfmt"
-	@echo "  check         build + test + clippy"
-	@echo "  riscv-tests   Run the full riscv-tests suite; print failures + summary"
-	@echo "  opensbi       Boot OpenSBI fw_jump.elf with the bundled DTB (release)"
-	@echo "  linux         Boot Linux (OpenSBI + kernel + DTB, release)"
-	@echo "  clean         cargo clean"
+	@echo "  build              Build all crates (debug)"
+	@echo "  test               Run unit tests"
+	@echo "  clippy             Lint with clippy"
+	@echo "  fmt                Format with rustfmt"
+	@echo "  check              build + test + clippy"
+	@echo "  riscv-tests        Run the full riscv-tests suite (auto-builds on first run)"
+	@echo "  riscv-tests-clean  Remove built test binaries to force a fresh rebuild"
+	@echo "  opensbi            Boot OpenSBI fw_jump.elf with the bundled DTB (release)"
+	@echo "  linux              Boot Linux (OpenSBI + kernel + DTB, release)"
+	@echo "  clean              cargo clean"
 
 build:
 	$(CARGO) build $(CARGO_FLAGS)
@@ -41,10 +42,60 @@ fmt:
 
 check: build test clippy
 
-# Walks the suites listed in RISCV_TEST_SUITES (skipping .dump/.bin/.txt
-# siblings), runs each ELF, and prints only failures plus a PASS/FAIL summary.
+# --- riscv-tests ----------------------------------------------------------
+
+RISCV_TESTS_STAMP := $(RISCV_TESTS_DIR)/.built
+
+# Sentinel file — runs fetch + build once, skipped on subsequent invocations
+# unless riscv-tests-clean was run.
+$(RISCV_TESTS_STAMP):
+	@# Fetch source if not already present (keeps stamp independent of PHONY fetch).
+	@if [ ! -f tests/riscv-tests/configure ]; then \
+		git submodule update --init --recursive --depth 1 tests/riscv-tests; \
+	fi
+	cd tests/riscv-tests && autoconf && ./configure --with-xlen=32
+	$(MAKE) -C tests/riscv-tests
+	@mkdir -p $(RISCV_TESTS_DIR)
+	@cp tests/riscv-tests/isa/rv32ui-* $(RISCV_TESTS_DIR)/
+	@cp tests/riscv-tests/isa/rv32um-* $(RISCV_TESTS_DIR)/
+	@cp tests/riscv-tests/isa/rv32ua-* $(RISCV_TESTS_DIR)/
+	@cp tests/riscv-tests/isa/rv32uc-* $(RISCV_TESTS_DIR)/
+	@cp tests/riscv-tests/isa/rv32uf-* $(RISCV_TESTS_DIR)/
+	@cp tests/riscv-tests/isa/rv32ud-* $(RISCV_TESTS_DIR)/
+	@cp tests/riscv-tests/isa/rv32mi-* $(RISCV_TESTS_DIR)/
+	@cp tests/riscv-tests/isa/rv32si-* $(RISCV_TESTS_DIR)/
+	@touch $@
+	@echo "riscv-tests binaries copied to $(RISCV_TESTS_DIR)/"
+
+# Remove built artifacts and copied binaries so the next riscv-tests
+# run rebuilds from scratch.
+riscv-tests-clean:
+	@# Clean the riscv-tests build output (isa/ binaries).
+	@if [ -f tests/riscv-tests/Makefile ]; then \
+		$(MAKE) -C tests/riscv-tests clean; \
+	fi
+	@# Remove autoconf / configure artifacts.
+	@rm -f tests/riscv-tests/Makefile
+	@rm -f tests/riscv-tests/config.status
+	@rm -f tests/riscv-tests/config.log
+	@rm -f tests/riscv-tests/configure
+	@rm -rf tests/riscv-tests/autom4te.cache
+	@# Remove copied test binaries and sentinel.
+	@rm -f $(RISCV_TESTS_DIR)/rv32ui-*
+	@rm -f $(RISCV_TESTS_DIR)/rv32um-*
+	@rm -f $(RISCV_TESTS_DIR)/rv32ua-*
+	@rm -f $(RISCV_TESTS_DIR)/rv32uc-*
+	@rm -f $(RISCV_TESTS_DIR)/rv32uf-*
+	@rm -f $(RISCV_TESTS_DIR)/rv32ud-*
+	@rm -f $(RISCV_TESTS_DIR)/rv32mi-*
+	@rm -f $(RISCV_TESTS_DIR)/rv32si-*
+	@rm -f $(RISCV_TESTS_STAMP)
+	@echo "riscv-tests cleaned"
+
+# Run the full riscv-tests suite.  Automatically fetches and builds the test
+# binaries if they haven't been built yet (or after a clean).
 # Exits non-zero if any test failed.
-riscv-tests:
+riscv-tests: $(RISCV_TESTS_STAMP)
 	@$(CARGO) build --quiet $(CARGO_FLAGS)
 	@pass=0; fail=0; fails=""; \
 	for suite in $(RISCV_TEST_SUITES); do \
