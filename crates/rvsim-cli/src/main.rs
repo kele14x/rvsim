@@ -60,6 +60,9 @@ const DEFAULT_PIE_BASE: u32 = 0x8000_0000;
 /// Default kernel load address — OpenSBI fw_jump expects the payload here.
 const DEFAULT_KERNEL_ADDR: u32 = 0x8040_0000;
 
+/// Default cycle limit — enough for a full Linux boot without hanging forever.
+const DEFAULT_MAX_CYCLES: u64 = 1_000_000_000;
+
 struct CliArgs {
     elf_path: String,
     dtb_path: Option<String>,
@@ -196,7 +199,7 @@ fn print_usage() {
     eprintln!("                        --kernel-addr for OpenSBI fw_jump to boot.");
     eprintln!("  --kernel-addr <addr>  Where to load the kernel (default 0x{:08x}).",
         DEFAULT_KERNEL_ADDR);
-    eprintln!("  --max-cycles <n>      Maximum simulation cycles (default 10M, 10B with --kernel).");
+    eprintln!("  --max-cycles <n>      Maximum simulation cycles (default 1B).");
 }
 
 fn main() {
@@ -330,11 +333,7 @@ fn run(args: CliArgs) -> i32 {
     hart.regs.set(10, args.hartid);
     hart.regs.set(11, dtb_loaded_at.unwrap_or(0));
 
-    let max_cycles: u64 = args.max_cycles.unwrap_or(if args.kernel_path.is_some() {
-        10_000_000_000
-    } else {
-        10_000_000
-    });
+    let max_cycles: u64 = args.max_cycles.unwrap_or(DEFAULT_MAX_CYCLES);
     let trace = std::env::var("RVSIM_TRACE").is_ok();
     let sbi_log = std::env::var("RVSIM_SBI_LOG").is_ok();
     let mut cycle_count: u64 = 0;

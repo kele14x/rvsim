@@ -293,12 +293,11 @@ You need three binaries plus a device-tree blob:
 cargo run -- \
   tests/opensbi-bin/fw_jump.elf \
   --dtb tests/device-tree-bin/rvsim.dtb \
-  --kernel tests/linux-bin/Image \
-  --max-cycles 1000000000
+  --kernel tests/linux-bin/Image
 ```
 
 Kernel output appears on stdout. Use `--max-cycles` to control the
-simulation length (default 10 billion with `--kernel`).
+simulation length (default 1 billion cycles).
 
 ### Debug environment variables
 
