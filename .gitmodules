@@ -13,3 +13,7 @@
 	path = tests/busybox
 	url = https://github.com/vda-linux/busybox_mirror.git
 	branch = 1_37_stable
+[submodule "tests/buildroot"]
+	path = tests/buildroot
+	url = git@github.com:buildroot/buildroot.git
+	branch = 2025.02.x
